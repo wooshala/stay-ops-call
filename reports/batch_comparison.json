@@ -1,0 +1,61 @@
+{
+  "before": {
+    "intent_accuracy": 0.7333333333333333,
+    "summary_quality": 0.7333333333333333,
+    "workflow_accuracy": 0.7666666666666667,
+    "conf_avg": 0.7336666666666666
+  },
+  "after": {
+    "intent_accuracy": 0.9333333333333333,
+    "summary_quality": 0.9666666666666667,
+    "workflow_accuracy": 0.9666666666666667,
+    "conf_avg": 0.5566666666666665
+  },
+  "delta": {
+    "intent": 0.2,
+    "summary": 0.23333333333333334,
+    "workflow": 0.2,
+    "conf": -0.17700000000000005
+  },
+  "patterns": [
+    {
+      "name": "checkin_checkout vs reservation_inquiry 혼동",
+      "before_count": 3,
+      "after_count": 1
+    },
+    {
+      "name": "service_request → other 미분류",
+      "before_count": 2,
+      "after_count": 0
+    },
+    {
+      "name": "payment 과분류",
+      "before_count": 1,
+      "after_count": 0
+    },
+    {
+      "name": "저신뢰도 통화 미처리",
+      "before_count": 1,
+      "after_count": 0
+    },
+    {
+      "name": "Summary 정보 부족",
+      "before_count": 5,
+      "after_count": 1
+    }
+  ],
+  "improvements": [
+    10,
+    12,
+    17,
+    19,
+    20,
+    22,
+    28
+  ],
+  "regressions": [
+    21
+  ],
+  "verdict": "PASS",
+  "pass_count": 3
+}

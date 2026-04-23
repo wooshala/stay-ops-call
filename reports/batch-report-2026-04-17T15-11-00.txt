@@ -1,0 +1,57 @@
+=== BATCH JOB STATUS ===
+ID: 0456c50d-4c06-47c1-8e42-8380d0f25401
+Status: completed
+Processed: 30/30
+Success: 26
+Failed: 4
+Started: 2026-04-16T22:24:29.332+00:00
+Finished: 2026-04-16T22:31:05.436+00:00
+
+=== RESULTS SUMMARY ===
+{
+  "completed": 29,
+  "warning": 1
+}
+
+=== SUCCESS CASES (first 5) ===
+1. 010-9957-2475_251205_023331.m4a
+   Intent: other (0.4)
+   Summary: 고객이 숙소 근처에 방이 없다고 문의하며 찜질방을 추천받았습니다....
+2. 010-9580-6199_250809_144628.m4a
+   Intent: reservation_inquiry (0.6)
+   Summary: 고객이 방 예약을 원하며 계좌이체로 결제를 하겠다고 언급했습니다....
+3. 010-9456-5122_251117_235247.m4a
+   Intent: other (0.4)
+   Summary: 고객이 성인 인증 방법에 대해 문의하고 있습니다....
+4. 010-9417-5127_260108_195534.m4a
+   Intent: other (0.4)
+   Summary: 고객이 레이블 호텔에 부재중 전화로 연락을 시도했으나, 구체적인 요청이나 문제는 언급되지 않았습니다....
+5. 010-8969-8381_251022_130557.m4a
+   Intent: other (0.2)
+   Summary: 통화 내용이 불분명하여 구체적인 정보가 없습니다....
+
+=== FAILURES ===
+{}
+
+=== WORKFLOW STATUS ===
+{
+  "skipped": 13,
+  "completed": 17
+}
+
+=== WORKFLOW FAILURES ===
+
+=== INTENT DISTRIBUTION (among successes) ===
+{
+  "other": 5,
+  "reservation_inquiry": 12,
+  "parking": 1,
+  "checkin_checkout": 6,
+  "service_request": 2,
+  "maintenance": 2,
+  "complaint": 1
+}
+
+=== CONFIDENCE STATS (successes) ===
+Average: 0.56
+Min: 0.20, Max: 0.90

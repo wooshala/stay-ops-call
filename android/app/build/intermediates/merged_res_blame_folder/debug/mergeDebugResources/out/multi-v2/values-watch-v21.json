@@ -1,0 +1,20 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.stayopscall.mobile.app-mergeDebugResources-77:/values-watch-v21/values-watch-v21.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\LG\\.gradle\\caches\\8.10.2\\transforms\\7b0b928a2636a894698d7f021f4ef448\\transformed\\appcompat-1.6.1\\res\\values-watch-v21\\values-watch-v21.xml",
+                    "from": {
+                        "startLines": "2,6,10",
+                        "startColumns": "4,4,4",
+                        "startOffsets": "55,271,499",
+                        "endLines": "5,9,13",
+                        "endColumns": "12,12,12",
+                        "endOffsets": "266,494,724"
+                    }
+                }
+            ]
+        }
+    ]
+}

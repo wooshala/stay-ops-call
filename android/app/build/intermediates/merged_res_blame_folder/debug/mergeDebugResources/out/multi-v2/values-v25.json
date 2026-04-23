@@ -1,0 +1,20 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.stayopscall.mobile.app-mergeDebugResources-77:/values-v25/values-v25.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\LG\\.gradle\\caches\\8.10.2\\transforms\\7b0b928a2636a894698d7f021f4ef448\\transformed\\appcompat-1.6.1\\res\\values-v25\\values-v25.xml",
+                    "from": {
+                        "startLines": "2,3,4,6",
+                        "startColumns": "4,4,4,4",
+                        "startOffsets": "55,126,209,308",
+                        "endLines": "2,3,5,7",
+                        "endColumns": "70,82,12,12",
+                        "endOffsets": "121,204,303,414"
+                    }
+                }
+            ]
+        }
+    ]
+}

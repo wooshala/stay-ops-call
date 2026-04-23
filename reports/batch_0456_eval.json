@@ -1,0 +1,57 @@
+{
+  "before": {
+    "intent_accuracy": 0.7333333333333333,
+    "summary_quality": 0.7333333333333333,
+    "workflow_accuracy": 0.7666666666666667
+  },
+  "after": {
+    "intent_accuracy": 1,
+    "summary_quality": 1,
+    "workflow_accuracy": 1
+  },
+  "delta": {
+    "intent": 0.2666666666666667,
+    "summary": 0.2666666666666667,
+    "workflow": 0.23333333333333328
+  },
+  "patterns": [
+    {
+      "pattern": "checkin_checkout vs reservation_inquiry",
+      "before": 3,
+      "after": 0,
+      "status": "improved"
+    },
+    {
+      "pattern": "service_request → other 처리",
+      "before": 2,
+      "after": 0,
+      "status": "improved"
+    },
+    {
+      "pattern": "payment 과분류 문제",
+      "before": 1,
+      "after": 0,
+      "status": "improved"
+    },
+    {
+      "pattern": "low confidence fallback 정상 작동 여부",
+      "before": 1,
+      "after": 1,
+      "status": "unchanged"
+    },
+    {
+      "pattern": "summary 정보 부족 문제",
+      "before": 5,
+      "after": 0,
+      "status": "improved"
+    }
+  ],
+  "debug": {
+    "after_counts": {
+      "total": 30,
+      "intentOk": 30,
+      "summaryOk": 30,
+      "wfOk": 30
+    }
+  }
+}

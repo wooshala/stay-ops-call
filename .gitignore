@@ -20,6 +20,10 @@
 # production
 /build
 
+# batch-test fixtures (local audio; keep directory)
+/batch-test/fixtures/*
+!/batch-test/fixtures/.gitkeep
+
 # misc
 .DS_Store
 *.pem
@@ -39,3 +43,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+android/local.properties 
+.env.local 
