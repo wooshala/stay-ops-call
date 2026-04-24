@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+console.log("SUPABASE_SERVICE_ROLE_KEY exists:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+
 const nextConfig: NextConfig = {
   experimental: {
     // proxy.ts buffers request bodies for all /api/* routes.

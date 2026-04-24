@@ -22,13 +22,9 @@ export const dynamic = "force-dynamic";
 type ErrorStage = "stt" | "analysis" | "workflow";
 
 export async function POST(request: Request) {
-  const t0 = Date.now();
-  const tag = () => `[upload +${Date.now() - t0}ms]`;
   try {
-    console.log(tag(), "START");
     const form = await request.formData();
     const file = form.get("file");
-    console.log(tag(), "form parsed, file present:", file instanceof File, "size:", file instanceof File ? file.size : 0);
 
     const started_at = parseOptionalIso(String(form.get("started_at") ?? ""));
     const ended_at = parseOptionalIso(String(form.get("ended_at") ?? ""));
@@ -131,7 +127,6 @@ export async function POST(request: Request) {
     let recording_url: string | null = null;
 
     if (file instanceof File && file.size > 0) {
-      console.log(tag(), "storage upload start, size:", file.size);
       const supabase = getServiceSupabase();
       const bucket = getRecordingsBucket();
       const safeName = sanitizeStorageFileName(file.name ?? "");
@@ -146,7 +141,7 @@ export async function POST(request: Request) {
         });
 
       if (upErr) {
-        console.error(tag(), "storage upload error", upErr.message);
+        console.error("[api/upload] storage upload error", upErr.message);
         await recordUploadJob({
           device_id: device_id ?? "unknown",
           source_type,
@@ -164,11 +159,9 @@ export async function POST(request: Request) {
       recording_path = path;
       const { data: pub } = getServiceSupabase().storage.from(bucket).getPublicUrl(path);
       recording_url = pub?.publicUrl ?? null;
-      console.log(tag(), "storage upload done, path:", path);
     }
 
-    console.log(tag(), "DB insert start, source_type:", source_type);
-    const row = await createCallRecord({
+    await createCallRecord({
       id,
       started_at,
       ended_at,
@@ -183,8 +176,6 @@ export async function POST(request: Request) {
       note,
       file_fingerprint,
     });
-
-    console.log(tag(), "DB insert done, call_id:", id);
 
     if (recording_path && !recording_url) {
       const supabase = getServiceSupabase();
@@ -216,16 +207,13 @@ export async function POST(request: Request) {
         call_id: id,
       });
 
-      // android_agent: 응답을 STT/analysis 완료까지 블로킹하지 않음.
-      // 파이프라인은 별도 트리거(webhook/cron)로 처리.
-      console.log(tag(), "android_agent upload complete, returning 200 immediately");
+      // android_agent: STT/analysis/workflow 파이프라인은 별도 트리거(webhook/cron)로 처리.
       return Response.json({ ok: true, duplicate: false, call_id: id });
     }
 
     let error_stage: ErrorStage | undefined;
     let workflow_error: string | undefined;
 
-    console.log(tag(), "STT start");
     const stt = await runSttForCall(id, {
       mockSampleIndex: mockSampleIndexOpt,
     });
@@ -312,7 +300,7 @@ export async function POST(request: Request) {
       },
     });
   } catch (e) {
-    console.error(tag(), "unexpected error", e);
+    console.error("[api/upload] unexpected error", e);
     return Response.json(
       { ok: false, error: e instanceof Error ? e.message : "Upload failed" },
       { status: 500 },
