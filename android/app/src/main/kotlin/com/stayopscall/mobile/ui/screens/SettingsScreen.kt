@@ -2,6 +2,7 @@ package com.stayopscall.mobile.ui.screens
 
 import android.app.Activity
 import android.content.Intent
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -28,7 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.stayopscall.mobile.core.storage.RecordingFolderStore
@@ -66,6 +69,7 @@ fun SettingsScreen() {
         runCatching { context.contentResolver.takePersistableUriPermission(uri, flags) }
         folderStore.saveTreeUri(uri)
         selectedUri = uri
+        Log.d("StayOpsScan", "folder selected")
         triggerSync(context)
     }
 
@@ -142,12 +146,22 @@ private fun StatusRow(label: String, value: String?) {
 }
 
 private fun triggerSync(context: android.content.Context) {
+    val uploadRequest = OneTimeWorkRequestBuilder<UploadQueueWorker>()
+        .setConstraints(
+            Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+        )
+        .build()
+
     WorkManager.getInstance(context)
         .beginUniqueWork(
             "sync_recordings",
             ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<ScanRecordingFolderWorker>().build()
         )
-        .then(OneTimeWorkRequestBuilder<UploadQueueWorker>().build())
+        .then(uploadRequest)
         .enqueue()
+
+    Log.d("StayOpsUpload", "auto scan/upload chain enqueued")
 }

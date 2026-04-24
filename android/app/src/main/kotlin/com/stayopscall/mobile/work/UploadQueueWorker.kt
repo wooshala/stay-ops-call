@@ -220,10 +220,11 @@ class UploadQueueWorker(
             }
 
             val ts = java.time.LocalTime.now().toString().substring(0, 5)
-            val summary = "[$ts] 업로드 $uploadedCount건, 중복 $duplicateCount건, 실패 $failedCount건 (전체 ${pending.size}건)"
+            val summary = "[$ts] 업로드 ${uploadedCount}건, 중복 ${duplicateCount}건, 실패 ${failedCount}건 (전체 ${pending.size}건)"
             Log.d("StayOpsUpload", "done: uploaded=$uploadedCount dup=$duplicateCount failed=$failedCount")
             debugStore.put(WorkerDebugStore.KEY_UPLOAD_LAST, summary)
             if (failedCount > 0) return Result.retry()
+            Log.d("StayOpsUpload", "UploadQueueWorker success")
             return Result.success()
         } catch (e: Exception) {
             Log.e("StayOpsUpload", "doWork failed", e)

@@ -142,8 +142,9 @@ class ScanRecordingFolderWorker(
         }
 
         val ts = java.time.LocalTime.now().toString().substring(0, 5)
-        val summary = "[$ts] 스캔 완료: 오디오 ${audioFiles.size}개, 신규 $insertedCount건"
+        val summary = "[$ts] 스캔 완료: 오디오 ${audioFiles.size}개, 신규 ${insertedCount}건"
         mark(summary)
+        Log.d(TAG_SCAN, "ScanRecordingFolderWorker success")
         return Result.success()
     }
 

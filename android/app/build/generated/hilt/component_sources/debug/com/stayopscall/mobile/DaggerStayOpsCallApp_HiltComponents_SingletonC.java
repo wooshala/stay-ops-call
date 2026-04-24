@@ -413,15 +413,15 @@ public final class DaggerStayOpsCallApp_HiltComponents_SingletonC {
 
     @IdentifierNameString
     private static final class LazyClassKeyProvider {
-      static String com_stayopscall_mobile_ui_screens_LoginViewModel = "com.stayopscall.mobile.ui.screens.LoginViewModel";
-
       static String com_stayopscall_mobile_ui_screens_StatusViewModel = "com.stayopscall.mobile.ui.screens.StatusViewModel";
 
-      @KeepFieldType
-      LoginViewModel com_stayopscall_mobile_ui_screens_LoginViewModel2;
+      static String com_stayopscall_mobile_ui_screens_LoginViewModel = "com.stayopscall.mobile.ui.screens.LoginViewModel";
 
       @KeepFieldType
       StatusViewModel com_stayopscall_mobile_ui_screens_StatusViewModel2;
+
+      @KeepFieldType
+      LoginViewModel com_stayopscall_mobile_ui_screens_LoginViewModel2;
     }
   }
 
@@ -465,15 +465,15 @@ public final class DaggerStayOpsCallApp_HiltComponents_SingletonC {
 
     @IdentifierNameString
     private static final class LazyClassKeyProvider {
-      static String com_stayopscall_mobile_ui_screens_StatusViewModel = "com.stayopscall.mobile.ui.screens.StatusViewModel";
-
       static String com_stayopscall_mobile_ui_screens_LoginViewModel = "com.stayopscall.mobile.ui.screens.LoginViewModel";
 
-      @KeepFieldType
-      StatusViewModel com_stayopscall_mobile_ui_screens_StatusViewModel2;
+      static String com_stayopscall_mobile_ui_screens_StatusViewModel = "com.stayopscall.mobile.ui.screens.StatusViewModel";
 
       @KeepFieldType
       LoginViewModel com_stayopscall_mobile_ui_screens_LoginViewModel2;
+
+      @KeepFieldType
+      StatusViewModel com_stayopscall_mobile_ui_screens_StatusViewModel2;
     }
 
     private static final class SwitchingProvider<T> implements Provider<T> {
