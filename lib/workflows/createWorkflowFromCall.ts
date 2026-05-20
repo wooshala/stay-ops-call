@@ -19,6 +19,7 @@ import {
   buildServiceRequestRow,
   shouldCreateWorkflowForIntent,
 } from "@/lib/workflows/rules";
+import { pushOperationCase, pushReservationLead } from "@/lib/integrations/univerOpsEvent";
 
 const DEBUG_WORKFLOW = process.env.DEBUG_WORKFLOW === "1";
 
@@ -171,6 +172,15 @@ export async function createWorkflowFromCall(
         channel_type: built.channel_type,
         source_confidence: built.source_confidence,
       });
+      void pushOperationCase({
+        callId,
+        caseType: built.case_type,
+        roomNo: built.room_no,
+        phoneNumber: call.phone_number ?? null,
+        title: built.title,
+        severity: built.severity,
+        occurredAt: call.started_at ?? null,
+      });
       return {
         ok: true,
         createdType: "operation_case",
@@ -233,6 +243,14 @@ export async function createWorkflowFromCall(
       title: built.title,
       description: built.description,
       status: built.status,
+    });
+    void pushReservationLead({
+      callId,
+      normalizedPhone: built.normalized_phone,
+      phoneNumber: call.phone_number ?? null,
+      roomNo: built.room_no,
+      title: built.title,
+      occurredAt: call.started_at ?? null,
     });
     return {
       ok: true,
