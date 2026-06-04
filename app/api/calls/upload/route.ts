@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { after } from "next/server";
 
 import { createCallRecord, getCallById, markWorkflowCompleted, markWorkflowFailed, markWorkflowSkipped, updateCallRecording } from "@/lib/db/calls";
 import { maybeCreateReservationDraftFromAnalysis } from "@/lib/db/reservationDrafts";
@@ -16,6 +17,7 @@ import { getRecordingsBucket, getServiceSupabase } from "@/lib/supabase/server";
 import { parseOptionalInt, parseOptionalIso } from "@/lib/utils/datetime";
 import { normalizePhone } from "@/lib/utils/phone";
 import { pushUploadedCallPendingEvent } from "@/lib/integrations/univerOpsPendingEvent";
+import { processUploadedCallForStt } from "@/lib/pipeline/processUploadedCallForStt";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -218,7 +220,22 @@ export async function POST(request: Request) {
         startedAt: started_at,
       });
 
-      // android_agent: STT/analysis/workflow 파이프라인은 별도 트리거(webhook/cron)로 처리.
+      after(async () => {
+        try {
+          await processUploadedCallForStt({
+            callId: id,
+            phone: phone_number,
+            room: room_no_hint,
+          });
+        } catch (e) {
+          console.error("[android_upload][stt_pipeline]", {
+            callId: id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      });
+
+      // android_agent: STT/analysis는 after() 백그라운드. workflow/CRM은 이번 단계 제외.
       return Response.json({ ok: true, duplicate: false, call_id: id });
     }
 

@@ -20,6 +20,8 @@ export const PrimaryIntentSchema = z.enum([
   "parking",
   "other",
   "manual_review_required",
+  /** 테스트·내용 불명 — 짧은/불확실 STT */
+  "test_or_unclear",
 ]);
 
 export const EntitiesSchema = z.object({
