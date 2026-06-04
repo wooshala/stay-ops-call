@@ -15,6 +15,7 @@ import {
 import { getRecordingsBucket, getServiceSupabase } from "@/lib/supabase/server";
 import { parseOptionalInt, parseOptionalIso } from "@/lib/utils/datetime";
 import { normalizePhone } from "@/lib/utils/phone";
+import { pushUploadedCallPendingEvent } from "@/lib/integrations/univerOpsPendingEvent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -205,6 +206,16 @@ export async function POST(request: Request) {
         file_fingerprint,
         status: "uploaded",
         call_id: id,
+      });
+
+      void pushUploadedCallPendingEvent({
+        callId: id,
+        recordingPath: recording_path,
+        phone: phone_number,
+        room: room_no_hint,
+        fileFingerprint: file_fingerprint,
+        deviceId: device_id,
+        startedAt: started_at,
       });
 
       // android_agent: STT/analysis/workflow 파이프라인은 별도 트리거(webhook/cron)로 처리.
