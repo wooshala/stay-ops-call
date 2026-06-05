@@ -16,6 +16,7 @@ import {
 import { getRecordingsBucket, getServiceSupabase } from "@/lib/supabase/server";
 import { parseOptionalInt, parseOptionalIso } from "@/lib/utils/datetime";
 import { normalizePhone } from "@/lib/utils/phone";
+import { getBearerTokenFromRequest } from "@/lib/auth/internalApi";
 import { pushUploadedCallPendingEvent } from "@/lib/integrations/univerOpsPendingEvent";
 import { processUploadedCallForStt } from "@/lib/pipeline/processUploadedCallForStt";
 
@@ -24,8 +25,34 @@ export const dynamic = "force-dynamic";
 
 type ErrorStage = "stt" | "analysis" | "workflow";
 
+function logUpload(phase: string, payload: Record<string, unknown>) {
+  console.log(`[${phase}]`, payload);
+}
+
 export async function POST(request: Request) {
+  const uploadStarted = Date.now();
+  logUpload("CALL_UPLOAD_HIT", {
+    method: request.method,
+    contentType: request.headers.get("content-type") ?? null,
+    hasAuthorization: Boolean(request.headers.get("authorization")),
+  });
+
   try {
+    const bearer = getBearerTokenFromRequest(request);
+    const internalToken = process.env.INTERNAL_API_TOKEN?.trim();
+    if (internalToken) {
+      if (bearer === internalToken) {
+        logUpload("CALL_UPLOAD_AUTH_OK", { mode: "bearer_matched" });
+      } else {
+        logUpload("CALL_UPLOAD_AUTH_OK", {
+          mode: "bearer_optional_mismatch",
+          hasBearer: Boolean(bearer),
+        });
+      }
+    } else {
+      logUpload("CALL_UPLOAD_AUTH_OK", { mode: "no_internal_api_token_configured" });
+    }
+
     const form = await request.formData();
     const file = form.get("file");
 
@@ -47,9 +74,27 @@ export async function POST(request: Request) {
         ? mockSampleIndex
         : undefined;
 
-    // source_type 검증 (필수)
     const source_type = parseSourceType(optionalString(form.get("source_type")));
+
+    logUpload("CALL_UPLOAD_FORM_PARSED", {
+      source_type: source_type ?? null,
+      device_id: device_id ? `${device_id.slice(0, 8)}…` : null,
+      has_file: file instanceof File,
+      file_size: file instanceof File ? file.size : 0,
+      file_fingerprint_present: Boolean(file_fingerprint),
+    });
+
+    if (file instanceof File && file.size > 0) {
+      logUpload("CALL_UPLOAD_FILE_RECEIVED", {
+        file_name: file.name ?? null,
+        file_size: file.size,
+        file_type: file.type || null,
+      });
+    }
+
+    // source_type 검증 (필수)
     if (!source_type) {
+      logUpload("CALL_UPLOAD_RESPONSE_SENT", { status: 400, error: "invalid_source_type" });
       return Response.json(
         { ok: false, error: "invalid_source_type" },
         { status: 400 },
@@ -109,6 +154,12 @@ export async function POST(request: Request) {
           call_id: existing.id,
         });
 
+        logUpload("CALL_UPLOAD_RESPONSE_SENT", {
+          status: 409,
+          duplicate: true,
+          call_id: existing.id,
+          elapsed_ms: Date.now() - uploadStarted,
+        });
         return Response.json(
           { ok: false, duplicate: true, call_id: existing.id },
           { status: 409 },
@@ -164,21 +215,36 @@ export async function POST(request: Request) {
       recording_url = pub?.publicUrl ?? null;
     }
 
-    await createCallRecord({
-      id,
-      started_at,
-      ended_at,
-      duration_sec,
-      phone_number,
-      normalized_phone,
-      direction,
+    logUpload("CALL_UPLOAD_DB_INSERT_START", {
+      call_id: id,
       source_type,
-      room_no_hint,
-      recording_path,
-      recording_url,
-      note,
-      file_fingerprint,
+      recording_path: recording_path ?? null,
     });
+
+    try {
+      await createCallRecord({
+        id,
+        started_at,
+        ended_at,
+        duration_sec,
+        phone_number,
+        normalized_phone,
+        direction,
+        source_type,
+        room_no_hint,
+        recording_path,
+        recording_url,
+        note,
+        file_fingerprint,
+      });
+      logUpload("CALL_UPLOAD_DB_INSERT_OK", { call_id: id, source_type });
+    } catch (dbErr) {
+      logUpload("CALL_UPLOAD_DB_INSERT_FAIL", {
+        call_id: id,
+        error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+      });
+      throw dbErr;
+    }
 
     if (recording_path && !recording_url) {
       const supabase = getServiceSupabase();
@@ -221,6 +287,7 @@ export async function POST(request: Request) {
       });
 
       after(async () => {
+        logUpload("CALL_UPLOAD_AFTER_START", { call_id: id });
         try {
           await processUploadedCallForStt({
             callId: id,
@@ -228,6 +295,10 @@ export async function POST(request: Request) {
             room: room_no_hint,
           });
         } catch (e) {
+          logUpload("CALL_UPLOAD_AFTER_FAIL", {
+            call_id: id,
+            error: e instanceof Error ? e.message : String(e),
+          });
           console.error("[android_upload][stt_pipeline]", {
             callId: id,
             error: e instanceof Error ? e.message : String(e),
@@ -235,7 +306,12 @@ export async function POST(request: Request) {
         }
       });
 
-      // android_agent: STT/analysis는 after() 백그라운드. workflow/CRM은 이번 단계 제외.
+      logUpload("CALL_UPLOAD_RESPONSE_SENT", {
+        status: 200,
+        call_id: id,
+        source_type,
+        elapsed_ms: Date.now() - uploadStarted,
+      });
       return Response.json({ ok: true, duplicate: false, call_id: id });
     }
 
@@ -328,9 +404,15 @@ export async function POST(request: Request) {
       },
     });
   } catch (e) {
+    const message = e instanceof Error ? e.message : "Upload failed";
+    logUpload("CALL_UPLOAD_RESPONSE_SENT", {
+      status: 500,
+      error: message,
+      elapsed_ms: Date.now() - uploadStarted,
+    });
     console.error("[api/upload] unexpected error", e);
     return Response.json(
-      { ok: false, error: e instanceof Error ? e.message : "Upload failed" },
+      { ok: false, error: message },
       { status: 500 },
     );
   }
