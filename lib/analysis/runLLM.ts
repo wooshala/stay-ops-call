@@ -1,5 +1,4 @@
-import OpenAI from "openai";
-
+import { createOpenAIClient } from "@/lib/openai/client";
 import { ANALYSIS_SYSTEM_PROMPT } from "@/lib/analysis/prompt";
 import { getMockAnalysisForTranscript } from "@/lib/analysis/sampleData";
 import {
@@ -90,7 +89,7 @@ export async function runAnalysisLLM(text: string): Promise<RunAnalysisLLMResult
   }
 
   try {
-    const openai = new OpenAI({ apiKey });
+    const openai = createOpenAIClient(apiKey);
     const model =
       process.env.OPENAI_ANALYSIS_MODEL?.trim() || "gpt-4o-mini";
 

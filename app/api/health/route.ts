@@ -1,4 +1,5 @@
 import { getBearerTokenFromRequest } from "@/lib/auth/internalApi";
+import { getOpenAIConfigProbe } from "@/lib/openai/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +17,7 @@ export async function GET(request: Request) {
   );
   const hasInternalApiToken = Boolean(process.env.INTERNAL_API_TOKEN?.trim());
   const hasUploadBearer = Boolean(getBearerTokenFromRequest(request));
+  const openai = getOpenAIConfigProbe();
 
   return Response.json({
     ok: hasSupabaseUrl && hasSupabaseServiceRoleKey,
@@ -27,6 +29,11 @@ export async function GET(request: Request) {
       hasUniverOpsUrl,
       hasInternalEventsSecret,
       hasInternalApiToken,
+      hasOpenaiApiKey: openai.hasApiKey,
+      openaiBaseUrl: openai.baseUrl,
+      openaiBaseUrlRawSet: openai.baseUrlRawSet,
+      sttProvider: openai.sttProvider,
+      openaiSttModel: openai.sttModel,
     },
     probe: {
       nodeEnv: process.env.NODE_ENV ?? "unknown",

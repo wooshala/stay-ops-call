@@ -3,7 +3,10 @@ import {
   assessTranscriptUncertainty,
   buildUncertainAnalysisResult,
 } from "@/lib/analysis/transcriptUncertainty";
-import { updatePendingEventAfterStt } from "@/lib/integrations/updateUniverOpsPendingEvent";
+import {
+  updatePendingEventAfterStt,
+  updatePendingEventOnSttFailed,
+} from "@/lib/integrations/updateUniverOpsPendingEvent";
 import { runAnalysisForCall } from "@/lib/pipeline/runAnalysisForCall";
 import { runSttForCall } from "@/lib/pipeline/runSttForCall";
 
@@ -13,13 +16,21 @@ export type ProcessUploadedCallForSttInput = {
   room?: string | null;
 };
 
+export type ProcessUploadedCallForSttResult = {
+  ok: boolean;
+  stage: "stt_failed" | "analysis_failed" | "stt_completed";
+  callId: string;
+  error?: string;
+  pendingEventPatched?: boolean;
+};
+
 /**
  * android_agent 업로드 후 백그라운드 STT → LLM 구조화 → pending_event summary 갱신.
  * 업로드 API 응답과 분리되어 실행한다.
  */
 export async function processUploadedCallForStt(
   input: ProcessUploadedCallForSttInput,
-): Promise<void> {
+): Promise<ProcessUploadedCallForSttResult> {
   const { callId, phone, room } = input;
   const pipelineStarted = Date.now();
 
@@ -30,13 +41,28 @@ export async function processUploadedCallForStt(
   const sttMs = Date.now() - sttStarted;
 
   if (!stt.ok) {
+    console.warn("[CALL_STT_FAILED]", {
+      callId,
+      error: stt.error,
+      sttMs,
+    });
     console.warn("[CALL_STT_DONE]", {
       callId,
       ok: false,
       error: stt.error,
       sttMs,
     });
-    return;
+    const pendingEventPatched = await updatePendingEventOnSttFailed(
+      callId,
+      stt.error,
+    );
+    return {
+      ok: false,
+      stage: "stt_failed",
+      callId,
+      error: stt.error,
+      pendingEventPatched,
+    };
   }
 
   console.log("[CALL_STT_DONE]", {
@@ -80,7 +106,12 @@ export async function processUploadedCallForStt(
         code: analysisResult.code,
         analysisMs,
       });
-      return;
+      return {
+        ok: false,
+        stage: "analysis_failed",
+        callId,
+        error: analysisResult.error,
+      };
     }
 
     analysis = analysisResult.analysis;
@@ -95,7 +126,7 @@ export async function processUploadedCallForStt(
     });
   }
 
-  await updatePendingEventAfterStt({
+  const pendingEventPatched = await updatePendingEventAfterStt({
     callId,
     analysis,
     transcript: stt.transcript,
@@ -105,4 +136,11 @@ export async function processUploadedCallForStt(
     analysisMs,
     uncertain,
   });
+
+  return {
+    ok: true,
+    stage: "stt_completed",
+    callId,
+    pendingEventPatched,
+  };
 }

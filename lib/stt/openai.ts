@@ -1,5 +1,9 @@
-import OpenAI, { toFile } from "openai";
+import { toFile } from "openai";
 
+import {
+  createOpenAIClient,
+  logOpenAISttConfig,
+} from "@/lib/openai/client";
 import { getServiceSupabase } from "@/lib/supabase/server";
 import type { SttProvider, SttResult } from "@/lib/stt/provider";
 
@@ -48,7 +52,8 @@ export class OpenAISttProvider implements SttProvider {
     const model =
       process.env.OPENAI_STT_MODEL?.trim() || "gpt-4o-mini-transcribe";
 
-    const client = new OpenAI({ apiKey });
+    logOpenAISttConfig("transcribeAudio");
+    const client = createOpenAIClient(apiKey);
     const res = await client.audio.transcriptions.create({
       file,
       model,
