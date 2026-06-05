@@ -35,6 +35,7 @@ export async function GET(request: Request) {
       openaiBaseUrlRawInvalid: openai.baseUrlRawInvalid,
       sttProvider: openai.sttProvider,
       openaiSttModel: openai.sttModel,
+      openaiSttModelConfigured: openai.sttModelConfigured,
     },
     probe: {
       nodeEnv: process.env.NODE_ENV ?? "unknown",

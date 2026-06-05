@@ -47,23 +47,38 @@ export function createOpenAIClient(apiKey: string): OpenAI {
   return new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseURL });
 }
 
+export function resolveOpenAISttModel(): string {
+  const configured = process.env.OPENAI_STT_MODEL?.trim();
+  const fallback = "gpt-4o-mini-transcribe";
+  if (!configured) return fallback;
+  if (/transcribe|whisper/i.test(configured)) return configured;
+  console.warn("[OPENAI_STT_CONFIG] OPENAI_STT_MODEL is not a transcription model; using fallback", {
+    configured,
+    using: fallback,
+  });
+  return fallback;
+}
+
 export function getOpenAIConfigProbe(): {
   hasApiKey: boolean;
   baseUrl: string;
   baseUrlRaw: string | null;
   baseUrlRawInvalid: boolean;
   sttModel: string;
+  sttModelConfigured: string | null;
   sttProvider: string;
   analysisModel: string;
 } {
   const raw = process.env.OPENAI_BASE_URL?.trim() ?? null;
   const rawInvalid = Boolean(raw && !/^https?:\/\//i.test(raw));
+  const configured = process.env.OPENAI_STT_MODEL?.trim() ?? null;
   return {
     hasApiKey: Boolean(process.env.OPENAI_API_KEY?.trim()),
     baseUrl: normalizeOpenAIBaseUrl(process.env.OPENAI_BASE_URL),
     baseUrlRaw: raw,
     baseUrlRawInvalid: rawInvalid,
-    sttModel: process.env.OPENAI_STT_MODEL?.trim() || "gpt-4o-mini-transcribe",
+    sttModel: resolveOpenAISttModel(),
+    sttModelConfigured: configured,
     sttProvider: (process.env.STT_PROVIDER ?? "openai").toLowerCase(),
     analysisModel: process.env.OPENAI_ANALYSIS_MODEL?.trim() || "gpt-4o-mini",
   };

@@ -1,4 +1,5 @@
 import { getCallById } from "@/lib/db/calls";
+import { processUploadedCallForStt } from "@/lib/pipeline/processUploadedCallForStt";
 import { runSttForCall } from "@/lib/pipeline/runSttForCall";
 
 export const runtime = "nodejs";
@@ -25,6 +26,19 @@ export async function POST(
         },
         { status: 409 },
       );
+    }
+
+    const fullPipeline =
+      new URL(request.url).searchParams.get("full") === "1";
+
+    if (fullPipeline) {
+      const result = await processUploadedCallForStt({
+        callId: id,
+        phone: call.phone_number,
+        room: call.room_no_hint,
+      });
+      const updated = await getCallById(id);
+      return Response.json({ ...result, call: updated });
     }
 
     let mockSampleIndex: number | undefined;
