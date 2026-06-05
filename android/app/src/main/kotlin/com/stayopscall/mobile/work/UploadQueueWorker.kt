@@ -290,6 +290,9 @@ class UploadQueueWorker(
                     level = HttpLoggingInterceptor.Level.BASIC
                 }
                 val uploadClient = OkHttpClient.Builder()
+                    .connectTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+                    .writeTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
                     .addInterceptor { chain ->
                         val request = chain.request()
                         val token = BuildConfig.UPLOAD_AGENT_TOKEN

@@ -37,7 +37,10 @@
 
             // Upload agent API (new): /api/calls/upload
             // Set UPLOAD_BASE_URL in local.properties (e.g. http://192.168.x.x:3000/ for real-device dev)
-            val uploadBaseUrl = localProps.getProperty("UPLOAD_BASE_URL", "https://dev.example.com/")
+            val uploadBaseUrl = localProps.getProperty(
+                "UPLOAD_BASE_URL",
+                "https://stay-ops-call.onrender.com/"
+            )
             buildConfigField("String", "UPLOAD_BASE_URL", "\"$uploadBaseUrl\"")
             // Dev only. Release should be provisioned per-device later (do not hardcode server-internal keys).
             // Set UPLOAD_AGENT_TOKEN in local.properties (never commit the actual token)
@@ -55,7 +58,7 @@
                 isMinifyEnabled = false
                 // prod environment
                 buildConfigField("String", "BASE_URL", "\"https://app.example.com/api/mobile/\"")
-                buildConfigField("String", "UPLOAD_BASE_URL", "\"https://app.example.com/\"")
+                // UPLOAD_BASE_URL: defaultConfig local.properties — release도 동일 prod URL 사용
                 proguardFiles(
                     getDefaultProguardFile("proguard-android-optimize.txt"),
                     "proguard-rules.pro"
