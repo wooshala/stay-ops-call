@@ -52,8 +52,18 @@ export class OpenAISttProvider implements SttProvider {
     const model =
       process.env.OPENAI_STT_MODEL?.trim() || "gpt-4o-mini-transcribe";
 
-    logOpenAISttConfig("transcribeAudio");
     const client = createOpenAIClient(apiKey);
+    logOpenAISttConfig("transcribeAudio", { model, client });
+
+    const requestPath = "/audio/transcriptions";
+    const resolvedUrl = `${client.baseURL}${requestPath}`;
+    console.log("[OPENAI_STT_REQUEST]", {
+      method: "POST",
+      path: requestPath,
+      resolvedUrl,
+      model,
+    });
+
     const res = await client.audio.transcriptions.create({
       file,
       model,
