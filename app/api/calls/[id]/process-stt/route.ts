@@ -17,17 +17,6 @@ export async function POST(
       return Response.json({ error: "Not found" }, { status: 404 });
     }
 
-    if (call.stt_status === "completed" && call.transcript_text) {
-      return Response.json(
-        {
-          error:
-            "STT already completed; transcript is preserved. Contact admin to re-run if needed.",
-          call,
-        },
-        { status: 409 },
-      );
-    }
-
     const fullPipeline =
       new URL(request.url).searchParams.get("full") === "1";
 
@@ -39,6 +28,17 @@ export async function POST(
       });
       const updated = await getCallById(id);
       return Response.json({ ...result, call: updated });
+    }
+
+    if (call.stt_status === "completed" && call.transcript_text) {
+      return Response.json(
+        {
+          error:
+            "STT already completed; transcript is preserved. Contact admin to re-run if needed.",
+          call,
+        },
+        { status: 409 },
+      );
     }
 
     let mockSampleIndex: number | undefined;
