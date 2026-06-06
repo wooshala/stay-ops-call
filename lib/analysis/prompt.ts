@@ -8,7 +8,7 @@ Output: ONE JSON object only. No markdown fences, no commentary before or after 
 Required top-level keys (exact names):
 - summary: 1–2 sentence Korean summary in third-person narrative. Strict rules:
   (a) NEVER copy transcript text verbatim — always paraphrase in your own words.
-  (b) MUST include at least one specific detail if present: room number, date/time, price, guest name, item name, issue description. Bad: "숙박 요금을 문의했습니다" Good: "내일 저녁 체크인 시 더블룸 요금을 문의했습니다."
+  (b) MUST include at least one specific detail if present: room number, date/time, price, guest name, item name, issue description. Bad: "숙박 요금을 문의했습니다" Good: "내일 저녁 체크인 시 더블룸 요금을 문의했습니다." For reservation-related calls, if the guest states their name, you MUST put it in entities.guest_name AND reservation_staff.guest_name and mention it in summary — never omit a clearly stated name.
   (c) Use Korean only — no English words like "availability", "feedback", etc.
   (d) Do NOT add information not explicitly stated in the transcript.
   (e) If transcript contains obvious STT garble (nonsense syllables, disconnected fragments), describe the apparent intent instead of copying the garbled words.
@@ -16,7 +16,10 @@ Required top-level keys (exact names):
 - secondary_tags: string[] (e.g. room_mentioned, urgent_issue, accessibility_inquiry)
 - actionable_secondary_intents: null | array of same intent values (secondary business intents; workflow uses primary only)
 - confidence: number 0–1. Use low confidence (< 0.5) when transcript is noisy, too short, or hard to classify.
-- entities: object with nullable fields: room_no, guest_name, issue_type, item_requested, quantity, unit, arrival_eta, occupancy_count, checkin_date, checkout_date, quoted_price, complaint_reason, amount, payment_method, payment_deposit, group_booking, room_count, deposit_amount, parking_count — null if unknown; never guess PII.
+- entities: object with nullable fields: room_no, guest_name, issue_type, item_requested, quantity, unit, arrival_eta, occupancy_count, checkin_date, checkout_date, quoted_price, complaint_reason, amount, payment_method, payment_deposit, group_booking, room_count, room_type, deposit_amount, parking_count — null if unknown; never guess PII.
+- reservation_staff: for reservation_inquiry, rate_inquiry, quotation_intent, checkin_checkout, extension_request only — object with nullable fields: usage_date (이용일, e.g. "오늘", "6/5"), checkin_time (입실시간, e.g. "18:00"), room_type (e.g. "스탠다드"), room_count (integer), amount (KRW integer), vehicle_count (integer), guest_name, contact, booking_status (e.g. "예약 의사 있음", "단순 문의", "예약 확정"). Omit or set all null for non-reservation intents.
+- missing_fields: string[] — Korean field labels not confirmed in transcript (e.g. "금액", "차량대수", "고객명"). Empty [] if all reservation_staff fields are confirmed.
+- follow_up_questions: string[] — short Korean questions staff should ask on callback for missing_fields (e.g. "입실 시간을 확인해야 합니다."). Empty [] if nothing missing.
 - recommended_actions: array of { action_type, title, description?, priority: "low"|"normal"|"high" }
 
 ## primary_intent values and definitions
@@ -55,5 +58,13 @@ Required top-level keys (exact names):
    - rate_inquiry → reservation_inquiry
    - quotation_intent → reservation_inquiry (unless clearly a group/package quote, then use reservation_inquiry)
    - manual_review_required → other
+
+6. Reservation / check-in calls (reservation_inquiry, rate_inquiry, quotation_intent, checkin_checkout, extension_request):
+   - Prioritize extracting operational reservation_staff fields over a poetic summary.
+   - guest_name is the highest-priority field when the caller clearly states their name (성함, 예약자명, "OOO입니다"). Copy exactly into entities.guest_name and reservation_staff.guest_name. Never guess names not spoken.
+   - Do NOT guess values not stated in the transcript — use null and add the Korean label to missing_fields.
+   - Populate follow_up_questions for each missing_fields entry (what staff must confirm on callback).
+   - summary: still required — 1–2 sentences, but lead with confirmed reservation facts (date, room type/count, check-in time) and end with what is still unknown if any.
+   - booking_status examples: "예약 의사 있음" (wants to book), "단순 문의" (price/availability only), "예약 확정" (confirmed booking).
 
 Respond with valid JSON only.`;

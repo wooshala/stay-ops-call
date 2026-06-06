@@ -1,5 +1,10 @@
 import type { AnalysisResult } from "@/lib/analysis/schema";
 import type { TranscriptUncertaintyAssessment } from "@/lib/analysis/transcriptUncertainty";
+import {
+  buildReservationStaffContext,
+  buildReservationStaffSummaryLines,
+  isReservationStaffIntent,
+} from "@/lib/analysis/reservationStaffFields";
 
 type PendingEventType =
   | "maintenance"
@@ -82,6 +87,16 @@ export function buildStructuredPendingSummary(
 
   const typeLabel =
     INTENT_TYPE_LABEL[analysis.primary_intent] ?? "통화 문의";
+
+  if (isReservationStaffIntent(analysis.primary_intent)) {
+    const staff = buildReservationStaffContext(analysis, phone);
+    if (staff) {
+      const lines = [typeLabel, ...buildReservationStaffSummaryLines(analysis, staff)];
+      if (suggestsCallback(analysis, phone)) lines.push("콜백 요청");
+      return lines.join("\n");
+    }
+  }
+
   const lines = [typeLabel, analysis.summary.trim()];
 
   if (suggestsCallback(analysis, phone)) {

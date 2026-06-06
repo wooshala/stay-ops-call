@@ -30,7 +30,7 @@ import { updatePhoneContactAfterAnalysis } from "@/lib/db/phoneContacts";
 import { resolveRoomNo } from "@/lib/utils/roomNo";
 import { computeAutoScore, decideAuto, getClusterKey } from "@/lib/review/autoDecision";
 
-const ANALYSIS_SCHEMA_VERSION = "1";
+const ANALYSIS_SCHEMA_VERSION = "2";
 const MAX_RAW_RESPONSE_CHARS = 100_000;
 const MAX_ERROR_CHARS = 1800;
 const DEBUG_LLM_RESPONSE = process.env.DEBUG_LLM_RESPONSE === "1";

@@ -13,6 +13,7 @@ import { runSttForCall } from "@/lib/pipeline/runSttForCall";
 export type ProcessUploadedCallForSttInput = {
   callId: string;
   phone?: string | null;
+  normalizedPhone?: string | null;
   room?: string | null;
 };
 
@@ -31,7 +32,7 @@ export type ProcessUploadedCallForSttResult = {
 export async function processUploadedCallForStt(
   input: ProcessUploadedCallForSttInput,
 ): Promise<ProcessUploadedCallForSttResult> {
-  const { callId, phone, room } = input;
+  const { callId, phone, normalizedPhone, room } = input;
   const pipelineStarted = Date.now();
 
   console.log("[CALL_STT_START]", { callId });
@@ -130,7 +131,8 @@ export async function processUploadedCallForStt(
     callId,
     analysis,
     transcript: stt.transcript,
-    phone,
+    phone: stt.call.phone_number ?? phone,
+    normalizedPhone: stt.call.normalized_phone ?? normalizedPhone,
     room,
     sttMs,
     analysisMs,

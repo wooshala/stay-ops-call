@@ -212,9 +212,13 @@ export function buildUncertainAnalysisResult(
       payment_deposit: null,
       group_booking: null,
       room_count: null,
+      room_type: null,
       deposit_amount: null,
       parking_count: null,
     },
+    reservation_staff: null,
+    missing_fields: [],
+    follow_up_questions: [],
     recommended_actions: [
       {
         action_type: "manual_review",

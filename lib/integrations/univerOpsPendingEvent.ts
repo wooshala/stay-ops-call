@@ -9,6 +9,8 @@ const INTERNAL_EVENTS_SECRET =
   process.env.UNIVER_OPS_SECRET?.trim() ??
   "";
 
+import { buildPendingEventPhoneFields } from "@/lib/integrations/resolveCallPhoneForPending";
+
 const UPLOAD_PENDING_SUMMARY =
   "통화 녹음이 업로드되었습니다. STT 분석 대기 중입니다.";
 
@@ -16,6 +18,7 @@ export type PushUploadedCallPendingEventInput = {
   callId: string;
   recordingPath: string | null;
   phone?: string | null;
+  normalizedPhone?: string | null;
   room?: string | null;
   fileFingerprint?: string | null;
   deviceId?: string | null;
@@ -45,13 +48,18 @@ export async function pushUploadedCallPendingEvent(
     source_event_id: sourceEventId,
   });
 
+  const phoneFields = buildPendingEventPhoneFields({
+    phone_number: input.phone,
+    normalized_phone: input.normalizedPhone,
+  });
+
   const payload = {
     event_version: 1,
     event_type: "service_request" as const,
     source_type: "call" as const,
     source_event_id: sourceEventId,
     summary: UPLOAD_PENDING_SUMMARY,
-    phone: input.phone?.trim() || null,
+    phone: phoneFields.phone,
     room: input.room?.trim() || null,
     priority: "normal" as const,
     occurred_at: input.startedAt ?? null,
@@ -62,6 +70,9 @@ export async function pushUploadedCallPendingEvent(
       file_fingerprint: input.fileFingerprint ?? null,
       device_id: input.deviceId ?? null,
       stage: "uploaded_without_stt",
+      customer_phone: phoneFields.customer_phone,
+      normalized_phone: phoneFields.normalized_phone,
+      phone_number: phoneFields.phone_number,
     },
   };
 

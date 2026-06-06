@@ -121,9 +121,13 @@ export async function createWorkflowFromCall(
           payment_deposit: entity?.payment_deposit ?? null,
           group_booking: entity?.group_booking ?? null,
           room_count: entity?.room_count ?? null,
+          room_type: (entity as { room_type?: string | null } | null)?.room_type ?? null,
           deposit_amount: entity?.deposit_amount ?? null,
           parking_count: entity?.parking_count ?? null,
         },
+        reservation_staff: null,
+        missing_fields: [],
+        follow_up_questions: [],
         recommended_actions: [],
       };
     }

@@ -29,7 +29,11 @@ export const MOCK_ANALYSIS_BY_SAMPLE_INDEX: readonly AnalysisResult[] = [
       room_count: null,
       deposit_amount: null,
       parking_count: null,
+      room_type: null,
     },
+    reservation_staff: null,
+    missing_fields: [],
+    follow_up_questions: [],
     recommended_actions: [
       {
         action_type: "deliver_amenities",
@@ -65,7 +69,11 @@ export const MOCK_ANALYSIS_BY_SAMPLE_INDEX: readonly AnalysisResult[] = [
       room_count: null,
       deposit_amount: null,
       parking_count: null,
+      room_type: null,
     },
+    reservation_staff: null,
+    missing_fields: [],
+    follow_up_questions: [],
     recommended_actions: [
       {
         action_type: "maintenance_check",
@@ -100,7 +108,11 @@ export const MOCK_ANALYSIS_BY_SAMPLE_INDEX: readonly AnalysisResult[] = [
       room_count: null,
       deposit_amount: null,
       parking_count: null,
+      room_type: null,
     },
+    reservation_staff: null,
+    missing_fields: [],
+    follow_up_questions: [],
     recommended_actions: [
       {
         action_type: "rate_followup",
@@ -136,7 +148,11 @@ export const MOCK_ANALYSIS_BY_SAMPLE_INDEX: readonly AnalysisResult[] = [
       room_count: null,
       deposit_amount: null,
       parking_count: null,
+      room_type: null,
     },
+    reservation_staff: null,
+    missing_fields: [],
+    follow_up_questions: [],
     recommended_actions: [
       {
         action_type: "reservation_lead",
@@ -173,7 +189,11 @@ export const MOCK_ANALYSIS_BY_SAMPLE_INDEX: readonly AnalysisResult[] = [
       room_count: null,
       deposit_amount: null,
       parking_count: null,
+      room_type: null,
     },
+    reservation_staff: null,
+    missing_fields: [],
+    follow_up_questions: [],
     recommended_actions: [
       {
         action_type: "cs_followup",
@@ -209,7 +229,11 @@ export const MOCK_ANALYSIS_BY_SAMPLE_INDEX: readonly AnalysisResult[] = [
       room_count: null,
       deposit_amount: null,
       parking_count: null,
+      room_type: null,
     },
+    reservation_staff: null,
+    missing_fields: [],
+    follow_up_questions: [],
     recommended_actions: [
       {
         action_type: "payment_confirm",
@@ -245,7 +269,11 @@ export const MOCK_ANALYSIS_BY_SAMPLE_INDEX: readonly AnalysisResult[] = [
       room_count: 20,
       deposit_amount: null,
       parking_count: 15,
+      room_type: null,
     },
+    reservation_staff: null,
+    missing_fields: [],
+    follow_up_questions: [],
     recommended_actions: [
       {
         action_type: "quotation_followup",
@@ -304,7 +332,11 @@ export function getMockAnalysisForTranscript(transcript: string): AnalysisResult
       room_count: null,
       deposit_amount: null,
       parking_count: null,
+      room_type: null,
     },
+    reservation_staff: null,
+    missing_fields: [],
+    follow_up_questions: [],
     recommended_actions: [
       {
         action_type: "manual_review",

@@ -47,10 +47,25 @@ export const EntitiesSchema = z.object({
   group_booking: z.boolean().nullable().optional(),
   /** 견적·단체: 객실 수(실·개) */
   room_count: z.number().int().nullable().optional(),
+  /** 스탠다드·디럭스 등 객실 타입 */
+  room_type: z.string().nullable().optional(),
   /** 예약금·계약금 금액(원) */
   deposit_amount: z.number().nullable().optional(),
   /** 주차 대수 */
   parking_count: z.number().int().nullable().optional(),
+});
+
+/** 예약·입실 통화 — 직원 운영 필드 (LLM 추출) */
+export const ReservationStaffSchema = z.object({
+  usage_date: z.string().nullable().optional(),
+  checkin_time: z.string().nullable().optional(),
+  room_type: z.string().nullable().optional(),
+  room_count: z.number().int().nullable().optional(),
+  amount: z.number().nullable().optional(),
+  vehicle_count: z.number().int().nullable().optional(),
+  guest_name: z.string().nullable().optional(),
+  contact: z.string().nullable().optional(),
+  booking_status: z.string().nullable().optional(),
 });
 
 export const RecommendedActionSchema = z.object({
@@ -71,6 +86,11 @@ export const AnalysisResultSchema = z.object({
     .optional(),
   confidence: z.number().min(0).max(1),
   entities: EntitiesSchema,
+  /** 예약·입실 통화 운영 필드 (primary_intent가 예약 계열일 때 필수) */
+  reservation_staff: ReservationStaffSchema.nullable().optional(),
+  /** 한글 라벨: 이용일, 금액, 차량대수 등 */
+  missing_fields: z.array(z.string()).default([]),
+  follow_up_questions: z.array(z.string()).default([]),
   recommended_actions: z.array(RecommendedActionSchema),
 });
 

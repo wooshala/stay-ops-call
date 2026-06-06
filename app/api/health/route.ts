@@ -22,6 +22,11 @@ export async function GET(request: Request) {
   return Response.json({
     ok: hasSupabaseUrl && hasSupabaseServiceRoleKey,
     service: "stay-ops-call",
+    analysisVersion: "2",
+    buildCommit:
+      process.env.RENDER_GIT_COMMIT?.trim() ||
+      process.env.VERCEL_GIT_COMMIT_SHA?.trim()?.slice(0, 7) ||
+      null,
     time: new Date().toISOString(),
     env: {
       hasSupabaseUrl,

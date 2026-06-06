@@ -5,6 +5,12 @@ import {
   buildStructuredPendingSummary,
   primaryIntentToPendingEventType,
 } from "@/lib/integrations/buildStructuredPendingSummary";
+import {
+  buildReservationStaffContext,
+  enrichReservationStaffFromTranscript,
+  reservationStaffMetaFromAnalysis,
+} from "@/lib/analysis/reservationStaffFields";
+import { buildPendingEventPhoneFields } from "@/lib/integrations/resolveCallPhoneForPending";
 
 const UNIVER_OPS_URL = process.env.UNIVER_OPS_URL?.trim() ?? "";
 const INTERNAL_EVENTS_SECRET =
@@ -17,6 +23,7 @@ export type UpdatePendingEventAfterSttInput = {
   analysis: AnalysisResult;
   transcript: string;
   phone?: string | null;
+  normalizedPhone?: string | null;
   room?: string | null;
   sttMs?: number;
   analysisMs?: number;
@@ -79,7 +86,14 @@ export async function updatePendingEventAfterStt(
 
   const eventId = sourceEventId(input.callId);
   const uncertain = input.uncertain ?? null;
-  const summary = buildStructuredPendingSummary(input.analysis, input.phone, {
+  const enrichedAnalysis = uncertain?.isUncertain
+    ? input.analysis
+    : enrichReservationStaffFromTranscript(input.analysis, input.transcript);
+  const phoneFields = buildPendingEventPhoneFields({
+    phone_number: input.phone,
+    normalized_phone: input.normalizedPhone,
+  });
+  const summary = buildStructuredPendingSummary(enrichedAnalysis, phoneFields.phone, {
     uncertain,
   });
   const eventType = uncertain?.isUncertain
@@ -90,22 +104,39 @@ export async function updatePendingEventAfterStt(
     input.analysis.entities.room_no?.trim() ||
     null;
 
+  const staffContext = buildReservationStaffContext(enrichedAnalysis, phoneFields.phone);
+
   const payload = {
     source_event_id: eventId,
     source_type: "call" as const,
     summary,
     event_type: eventType,
     room,
-    phone: input.phone?.trim() || null,
+    phone: phoneFields.phone,
     context: {
       source: "stay-ops-call",
       stage: uncertain?.stage ?? "stt_completed",
       call_id: input.callId,
       primary_intent: input.analysis.primary_intent,
       transcript_preview: input.transcript.slice(0, 200),
+      transcript_text: input.transcript.slice(0, 8000),
       stt_ms: input.sttMs ?? null,
       analysis_ms: input.analysisMs ?? null,
       confidence: input.analysis.confidence,
+      customer_phone: phoneFields.customer_phone,
+      normalized_phone: phoneFields.normalized_phone,
+      phone_number: phoneFields.phone_number,
+      entities: enrichedAnalysis.entities,
+      ...(staffContext
+        ? {
+            reservation_staff: {
+              ...staffContext.fields,
+              ...reservationStaffMetaFromAnalysis(enrichedAnalysis),
+            },
+            missing_fields: staffContext.missing_fields,
+            follow_up_questions: staffContext.follow_up_questions,
+          }
+        : {}),
       ...(uncertain?.isUncertain
         ? {
             warning: uncertain.primaryWarning,
