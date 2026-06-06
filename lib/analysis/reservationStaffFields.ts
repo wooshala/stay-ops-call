@@ -167,7 +167,8 @@ export function enrichReservationStaffFromTranscript(
   if (rs.room_count == null || rs.room_count === 0) {
     const roomCountMatch =
       t.match(/스탠다드\s*(\d+)\s*(?:개|실|객실|룸|방)/) ??
-      t.match(/(\d+)\s*개\s*예약/);
+      t.match(/(\d+)\s*개\s*예약/) ??
+      (rs.room_type ? t.match(/(\d+)\s*개/) : null);
     if (roomCountMatch) rs.room_count = Number(roomCountMatch[1]);
   }
 
