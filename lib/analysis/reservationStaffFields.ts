@@ -164,8 +164,10 @@ export function enrichReservationStaffFromTranscript(
   }
 
   if (!rs.room_type && /스탠다드/.test(t)) rs.room_type = "스탠다드";
-  if (rs.room_count == null) {
-    const roomCountMatch = t.match(/스탠다드\s*(\d+)\s*(?:개|실|객실|룸|방)/);
+  if (rs.room_count == null || rs.room_count === 0) {
+    const roomCountMatch =
+      t.match(/스탠다드\s*(\d+)\s*(?:개|실|객실|룸|방)/) ??
+      t.match(/(\d+)\s*개\s*예약/);
     if (roomCountMatch) rs.room_count = Number(roomCountMatch[1]);
   }
 
@@ -185,7 +187,9 @@ export function enrichReservationStaffFromTranscript(
     rs.vehicle_count = analysis.entities.parking_count;
   }
 
-  const vehicleMatch = t.match(/차(?:량)?\s*(?:는|가)?\s*(두|2|세|3|한|1)\s*대/);
+  const vehicleMatch =
+    t.match(/차(?:량)?\s*(?:은|는|가)?\s*(두|2|세|3|한|1)\s*대/) ??
+    t.match(/(?:한|1)\s*대(?:입니다|이에요|예요|이요)?/);
   if (rs.vehicle_count == null && vehicleMatch) {
     const word = vehicleMatch[1]!;
     rs.vehicle_count =
