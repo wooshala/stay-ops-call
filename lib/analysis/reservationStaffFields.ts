@@ -143,6 +143,24 @@ export function reservationStaffMetaFromAnalysis(
   return source ? { guest_name_source: source } : {};
 }
 
+function koreanCountWordToNumber(word: string): number | null {
+  const map: Record<string, number> = {
+    한: 1,
+    하나: 1,
+    두: 2,
+    둘: 2,
+    세: 3,
+    셋: 3,
+    네: 4,
+    넷: 4,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+  };
+  return map[word] ?? null;
+}
+
 export function enrichReservationStaffFromTranscript(
   analysis: AnalysisResult,
   transcript: string,
@@ -167,9 +185,13 @@ export function enrichReservationStaffFromTranscript(
   if (rs.room_count == null || rs.room_count === 0) {
     const roomCountMatch =
       t.match(/스탠다드\s*(\d+)\s*(?:개|실|객실|룸|방)/) ??
+      t.match(/스탠다드\s*(한|두|둘|세|셋|네|넷|1|2|3|4)\s*(?:개|실|객실|룸|방)/) ??
       t.match(/(\d+)\s*개\s*예약/) ??
-      (rs.room_type ? t.match(/(\d+)\s*개/) : null);
-    if (roomCountMatch) rs.room_count = Number(roomCountMatch[1]);
+      (rs.room_type ? t.match(/(한|두|둘|세|셋|네|넷|\d+)\s*개/) : null);
+    if (roomCountMatch) {
+      const raw = roomCountMatch[1]!;
+      rs.room_count = /^\d+$/.test(raw) ? Number(raw) : (koreanCountWordToNumber(raw) ?? null);
+    }
   }
 
   if (!rs.checkin_time) {
