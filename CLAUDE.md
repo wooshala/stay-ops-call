@@ -17,3 +17,16 @@
 - 왜: ...
 - 결과: ...
 ```
+
+## Cross-repo Runbook-first debugging
+
+장애/버그/회귀 수정 작업 전, 관련 Runbook을 먼저 확인한다.
+
+Runbook 위치:
+`../univer-ops/docs/runbooks/INDEX.md`
+
+- stay-ops-call 관련 RB: RB-006, RB-007, RB-008, RB-016, RB-017
+- 관련 RB가 있으면 해당 Runbook의 진단 절차를 먼저 따른다.
+- 관련 RB가 없으면 해결 후 `univer-ops/docs/runbooks/INDEX.md`에 새 후보를 추가할지 보고한다.
+- 운영 비밀값, Render env, Supabase SQL, APK 재빌드, 실제 배포는 사용자 승인 없이 수행하지 않는다.
+- Runbook과 코드가 다르면 코드 기준으로 확인 후 Runbook 갱신 필요성을 보고한다.
