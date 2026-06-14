@@ -118,6 +118,57 @@ object CallTaskRelayClient {
         }
     }
 
+    // ── phone patch relay ──────────────────────────────────────────────────────
+
+    /** callback(phone=null) 이후 legacy에서 번호가 도착했을 때 기존 task에 번호 보강 요청 */
+    fun relayIncomingPhonePatch(
+        context: android.content.Context,
+        phone: String,
+        sourceEventId: String,
+    ) {
+        if (!isConfigured()) {
+            Log.w(TAG, "[CALL_INCOMING_PHONE_PATCH_OK] sourceEventId=$sourceEventId type=Config message=not configured")
+            return
+        }
+
+        val phoneMasked = maskPhone(phone)
+        val payload = JSONObject().apply {
+            put("event_type", "incoming")
+            put("source_event_id", sourceEventId)
+            put("phone", phone)
+        }
+
+        val url = relayUrl()
+        val sendMs = System.currentTimeMillis()
+        Log.i(TAG, "[CALL_INCOMING_PHONE_PATCH_SEND] sourceEventId=$sourceEventId phone=$phoneMasked url=$url")
+
+        try {
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", authHeader())
+                .header("Content-Type", "application/json; charset=utf-8")
+                .post(payload.toString().toRequestBody(jsonMediaType))
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                val elapsedMs = System.currentTimeMillis() - sendMs
+                val bodyText = response.body?.string().orEmpty()
+
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "[CALL_INCOMING_PHONE_PATCH_OK] sourceEventId=$sourceEventId FAIL code=${response.code} elapsedMs=${elapsedMs}ms")
+                    return
+                }
+
+                val json = runCatching { JSONObject(bodyText) }.getOrNull()
+                val ok = json?.optBoolean("ok", false) ?: false
+                Log.i(TAG, "[CALL_INCOMING_PHONE_PATCH_OK] sourceEventId=$sourceEventId ok=$ok elapsedMs=${elapsedMs}ms body=${truncateBody(bodyText)}")
+            }
+        } catch (e: Exception) {
+            val elapsedMs = System.currentTimeMillis() - sendMs
+            Log.w(TAG, "[CALL_INCOMING_PHONE_PATCH_OK] sourceEventId=$sourceEventId FAIL ${exceptionDetail(e)} elapsedMs=${elapsedMs}ms")
+        }
+    }
+
     // ── ended relay ────────────────────────────────────────────────────────────
 
     fun relayEndedCall(context: android.content.Context, event: EndedCallEvent) {

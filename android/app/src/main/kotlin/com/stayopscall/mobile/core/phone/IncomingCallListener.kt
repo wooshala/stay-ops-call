@@ -31,8 +31,10 @@ object IncomingCallListener {
     @Volatile private var legacyListenerRef: PhoneStateListener? = null
     @Volatile private var registered = false
 
-    // RINGING dedup: callback + legacy 둘 다 등록 시 한 번만 relay
+    // RINGING dedup + phone patch: callback(null) → legacy(번호) 순서 대응
     @Volatile private var lastRingingSentMs = 0L
+    @Volatile private var lastRingingSentPhone: String? = null          // null = phone=null로 전송됨
+    @Volatile private var lastRingingSentSourceEventId: String? = null
     private const val RINGING_DEDUP_WINDOW_MS = 3_000L
 
     fun hasPermission(context: Context): Boolean =
@@ -146,46 +148,79 @@ object IncomingCallListener {
             TelephonyManager.CALL_STATE_RINGING -> {
                 Log.i(TAG, "[CALL_STATE_RINGING] source=$source apiLevel=$apiLevel")
 
-                // callback + legacy 동시 등록 시 dedup — 3초 내 중복 relay 차단
                 val now = System.currentTimeMillis()
-                val shouldRelay = synchronized(this) {
-                    if (now - lastRingingSentMs < RINGING_DEDUP_WINDOW_MS) {
-                        false
-                    } else {
-                        lastRingingSentMs = now
-                        true
-                    }
-                }
-                if (!shouldRelay) {
-                    Log.d(TAG, "[CALL_STATE_RINGING_DEDUP] source=$source skipped (already sent within ${RINGING_DEDUP_WINDOW_MS}ms)")
-                    return
-                }
-
-                val startMs = now
                 val normalized = PhoneNormalizer.normalize(rawPhone?.trim())
                 val phoneMasked = normalized?.let { "***${it.takeLast(4)}" } ?: "null"
-                val sourceEventId = "incoming:$startMs:${normalized ?: "unknown"}"
 
-                Log.i(TAG, "[CALL_INCOMING_DETECTED] sourceEventId=$sourceEventId phone=$phoneMasked apiLevel=$apiLevel source=$source")
+                // callback(phone=null) → legacy(phone=번호) 순서 대응:
+                // dedup 창 안에서 null→실제번호로 보강되면 patch relay 전송
+                var action = "skip"
+                var actionSourceEventId: String? = null
 
-                if (normalized.isNullOrEmpty()) {
-                    Log.w(TAG, "[CALL_PHONE_MISSING] sourceEventId=$sourceEventId apiLevel=$apiLevel source=$source")
+                synchronized(this) {
+                    val withinWindow = (now - lastRingingSentMs) < RINGING_DEDUP_WINDOW_MS
+                    when {
+                        !withinWindow -> {
+                            val sid = "incoming:$now:${normalized ?: "unknown"}"
+                            lastRingingSentMs = now
+                            lastRingingSentPhone = normalized
+                            lastRingingSentSourceEventId = sid
+                            action = "relay"
+                            actionSourceEventId = sid
+                        }
+                        lastRingingSentPhone == null && normalized != null -> {
+                            // phone 보강: null → 실제번호
+                            lastRingingSentPhone = normalized
+                            action = "patch"
+                            actionSourceEventId = lastRingingSentSourceEventId
+                        }
+                        else -> {
+                            action = "skip"
+                        }
+                    }
                 }
 
-                IncomingCallState.record(normalized, sourceEventId, startMs)
-
-                // HTTP는 반드시 bgExecutor에서 — main thread에서 호출하면 NetworkOnMainThreadException
-                val capturedContext = context
-                val capturedPhone = normalized
-                val capturedSourceEventId = sourceEventId
-                val capturedStartMs = startMs
-                bgExecutor.execute {
-                    CallTaskRelayClient.relayIncomingCall(
-                        context = capturedContext,
-                        phone = capturedPhone,
-                        sourceEventId = capturedSourceEventId,
-                        startedAtMs = capturedStartMs,
-                    )
+                when (action) {
+                    "skip" -> {
+                        Log.d(TAG, "[CALL_STATE_RINGING_DEDUP] source=$source phone=$phoneMasked skipped")
+                    }
+                    "patch" -> {
+                        val capturedSourceEventId = actionSourceEventId ?: run {
+                            Log.w(TAG, "[CALL_INCOMING_PHONE_PATCH_DETECTED] sourceEventId=null — skip patch source=$source")
+                            return
+                        }
+                        Log.i(TAG, "[CALL_INCOMING_PHONE_PATCH_DETECTED] sourceEventId=$capturedSourceEventId phone=$phoneMasked source=$source")
+                        IncomingCallState.upgradeUnknown(normalized!!)
+                        val capturedContext = context
+                        val capturedPhone = normalized!!
+                        bgExecutor.execute {
+                            CallTaskRelayClient.relayIncomingPhonePatch(
+                                context = capturedContext,
+                                phone = capturedPhone,
+                                sourceEventId = capturedSourceEventId,
+                            )
+                        }
+                    }
+                    "relay" -> {
+                        val sourceEventId = actionSourceEventId ?: return
+                        Log.i(TAG, "[CALL_INCOMING_DETECTED] sourceEventId=$sourceEventId phone=$phoneMasked apiLevel=$apiLevel source=$source")
+                        if (normalized.isNullOrEmpty()) {
+                            Log.w(TAG, "[CALL_PHONE_MISSING] sourceEventId=$sourceEventId apiLevel=$apiLevel source=$source")
+                        }
+                        IncomingCallState.record(normalized, sourceEventId, now)
+                        val capturedContext = context
+                        val capturedPhone = normalized
+                        val capturedSourceEventId = sourceEventId
+                        val capturedStartMs = now
+                        bgExecutor.execute {
+                            CallTaskRelayClient.relayIncomingCall(
+                                context = capturedContext,
+                                phone = capturedPhone,
+                                sourceEventId = capturedSourceEventId,
+                                startedAtMs = capturedStartMs,
+                            )
+                        }
+                    }
                 }
             }
 

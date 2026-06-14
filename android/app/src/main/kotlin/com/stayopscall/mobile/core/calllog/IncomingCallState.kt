@@ -52,6 +52,16 @@ object IncomingCallState {
         return removed.sourceEventId
     }
 
+    /**
+     * phone=null로 전송된 UNKNOWN entry를 실제 번호 키로 승격.
+     * legacy PhoneStateListener가 뒤늦게 번호를 전달했을 때 호출.
+     */
+    fun upgradeUnknown(newPhone: String) {
+        val entry = pending.remove("UNKNOWN") ?: return
+        pending[newPhone] = entry
+        Log.i(TAG, "[INCOMING_STATE_PHONE_UPGRADED] phone=***${newPhone.takeLast(4)} sourceEventId=${entry.sourceEventId}")
+    }
+
     private fun clearStale() {
         val cutoff = System.currentTimeMillis() - STALE_MS
         val stale = pending.entries.filter { it.value.startedAtMs < cutoff }.map { it.key }
