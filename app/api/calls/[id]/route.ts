@@ -7,12 +7,30 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * calls.id 는 uuid 컬럼(001_create_calls.sql)이다. 비-uuid 를 그대로 조회하면
+ * Postgres 22P02 가 throw 되어 500 "Load failed" 로 위장된다.
+ *
+ * 특히 `/api/calls/history` 같은 정적 하위 경로가 배포에서 누락되면 이 동적 라우트가
+ * id="history" 로 흡수해 500 을 낸다(CALL-DASH-DIAG-2 근본원인). 배포 누락이 500 이
+ * 아니라 404 로 드러나도록 DB 조회 전에 형식을 검사한다.
+ */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await context.params;
+    if (!UUID_RE.test(id)) {
+      console.warn("[calls] non-uuid id rejected", {
+        route: "/api/calls/[id]",
+        id,
+      });
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
     const bundle = await getCallDetailBundle(id);
     if (!bundle) {
       return Response.json({ error: "Not found" }, { status: 404 });
