@@ -1,0 +1,9 @@
+## Copy to local.properties (never commit local.properties)
+sdk.dir=C\:\\Users\\YOU\\AppData\\Local\\Android\\Sdk
+
+UPLOAD_BASE_URL=https://stay-ops-call.onrender.com/
+UPLOAD_AGENT_TOKEN=
+
+# StayHub Call Phase 1 — call_tasks relay (required for E2E)
+UNIVER_OPS_URL=https://ledger-api-1.onrender.com
+INTERNAL_EVENTS_SECRET=

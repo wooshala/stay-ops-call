@@ -46,6 +46,17 @@
             // Set UPLOAD_AGENT_TOKEN in local.properties (never commit the actual token)
             val token = localProps.getProperty("UPLOAD_AGENT_TOKEN", "")
             buildConfigField("String", "UPLOAD_AGENT_TOKEN", "\"$token\"")
+
+            // univer-ops call_tasks relay (StayHub Call Phase 1)
+            // Required in android/local.properties — see local.properties.example
+            val univerOpsUrl = localProps.getProperty("UNIVER_OPS_URL", "")
+                .trim()
+                .ifBlank { "https://ledger-api-backend.onrender.com" }
+            buildConfigField("String", "UNIVER_OPS_URL", "\"$univerOpsUrl\"")
+            val eventsSecret = localProps.getProperty("INTERNAL_EVENTS_SECRET", "")
+                .trim()
+                .ifBlank { localProps.getProperty("UNIVER_OPS_SECRET", "")?.trim().orEmpty() }
+            buildConfigField("String", "INTERNAL_EVENTS_SECRET", "\"$eventsSecret\"")
         }
 
         buildTypes {

@@ -6,6 +6,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import com.stayopscall.mobile.core.calllog.CallLogCallTaskMonitor
+import com.stayopscall.mobile.core.sync.RecordingSyncTrigger
 import com.stayopscall.mobile.ui.navigation.StayOpsNavHost
 import com.stayopscall.mobile.ui.theme.StayOpsCallTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -22,5 +24,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        CallLogCallTaskMonitor.scanAndRelay(applicationContext)
+        RecordingSyncTrigger.triggerForegroundSync(applicationContext)
     }
 }

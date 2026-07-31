@@ -13,7 +13,7 @@ import com.stayopscall.mobile.data.local.entity.DeviceRegistrationEntity
 
 @Database(
     entities = [CallRecordingEntity::class, DeviceRegistrationEntity::class, AppSettingEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -57,6 +57,18 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_call_recordings_sha256` ON `call_recordings` (`sha256`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_call_recordings_status` ON `call_recordings` (`status`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_call_recordings_createdAt` ON `call_recordings` (`createdAt`)")
+            }
+        }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `phoneNumber` TEXT")
+                db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `normalizedPhone` TEXT")
+                db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `direction` TEXT")
+                db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `contactName` TEXT")
+                db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `recordedAtFromFilename` INTEGER")
+                db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `callLogMatchedAt` INTEGER")
+                db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `callLogMatchDeltaSec` INTEGER")
             }
         }
     }

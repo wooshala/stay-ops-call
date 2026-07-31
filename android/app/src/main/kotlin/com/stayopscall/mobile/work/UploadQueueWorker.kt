@@ -6,9 +6,11 @@ import android.util.Log
 import androidx.room.Room
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.stayopscall.mobile.core.calllog.RecordingCallMetadata
 import com.stayopscall.mobile.BuildConfig
 import com.stayopscall.mobile.core.device.DeviceIdentityProvider
 import com.stayopscall.mobile.core.storage.WorkerDebugStore
+import com.stayopscall.mobile.core.sync.SyncStatusTracker
 import com.stayopscall.mobile.data.local.RecordingStatus
 import com.stayopscall.mobile.data.local.AppDatabase
 import com.stayopscall.mobile.data.local.dao.CallRecordingDao
@@ -78,6 +80,7 @@ class UploadQueueWorker(
 
             if (pending.isEmpty()) {
                 debugStore.put(WorkerDebugStore.KEY_UPLOAD_LAST, "완료: 업로드 대기 없음")
+                SyncStatusTracker.onSyncChainFinished(applicationContext, success = true)
                 return Result.success()
             }
 
@@ -88,6 +91,11 @@ class UploadQueueWorker(
                     markFailedWithRetryPolicy(callRecordingDao, item, "UPLOAD_AGENT_TOKEN missing")
                 }
                 debugStore.put(WorkerDebugStore.KEY_UPLOAD_LAST, "오류: 업로드 토큰 미설정")
+                SyncStatusTracker.onSyncChainFinished(
+                    applicationContext,
+                    success = false,
+                    errorMsg = "UPLOAD_AGENT_TOKEN missing",
+                )
                 return Result.failure()
             }
 
@@ -106,14 +114,24 @@ class UploadQueueWorker(
                     )
                     callRecordingDao.update(itemUploading)
 
-                    val uri = Uri.parse(item.fileUri)
+                    val enriched = RecordingCallMetadata.enrichEntity(
+                        applicationContext,
+                        itemUploading.fileName,
+                        itemUploading,
+                    )
+                    if (enriched != itemUploading) {
+                        callRecordingDao.update(enriched.copy(updatedAt = System.currentTimeMillis()))
+                    }
+                    val uploadItem = enriched
+
+                    val uri = Uri.parse(uploadItem.fileUri)
                     val mimeType = applicationContext.contentResolver.getType(uri) ?: "audio/m4a"
                     val deviceId = deviceIdentityProvider.getOrCreateInstallationUuid()
 
                     // file part (streaming)
                     val fileBody = object : RequestBody() {
                         override fun contentType() = mimeType.toMediaTypeOrNull()
-                        override fun contentLength(): Long = item.fileSize
+                        override fun contentLength(): Long = uploadItem.fileSize
                         override fun writeTo(sink: BufferedSink) {
                             applicationContext.contentResolver.openInputStream(uri)?.use { input ->
                                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -125,7 +143,7 @@ class UploadQueueWorker(
                             } ?: throw IllegalStateException("Cannot open file stream")
                         }
                     }
-                    val filePart = MultipartBody.Part.createFormData("file", item.fileName, fileBody)
+                    val filePart = MultipartBody.Part.createFormData("file", uploadItem.fileName, fileBody)
 
                     fun textPartOrNull(value: String?): RequestBody? {
                         val v = value?.trim()
@@ -133,27 +151,39 @@ class UploadQueueWorker(
                         return RequestBody.create("text/plain".toMediaTypeOrNull(), v)
                     }
 
+                    fun intPartOrNull(value: Int?): RequestBody? {
+                        if (value == null) return null
+                        return RequestBody.create("text/plain".toMediaTypeOrNull(), value.toString())
+                    }
+
                     val sourceType = RequestBody.create("text/plain".toMediaTypeOrNull(), "android_agent")
                     // TODO: sha256 null = scan 단계에서 계산 생략. 업로드 시 fileUri를 임시 fingerprint로 사용
-                    val fp = RequestBody.create("text/plain".toMediaTypeOrNull(), item.sha256 ?: item.fileUri)
+                    val fp = RequestBody.create("text/plain".toMediaTypeOrNull(), uploadItem.sha256 ?: uploadItem.fileUri)
                     val devId = RequestBody.create("text/plain".toMediaTypeOrNull(), deviceId)
 
-                    Log.d("StayOpsUpload", "sending id=${item.id}")
+                    val startedAtMs = uploadItem.recordedAtFromFilename ?: uploadItem.lastModifiedAt
+                    val callLogMatchedAtIso = uploadItem.callLogMatchedAt?.let {
+                        java.time.Instant.ofEpochMilli(it).toString()
+                    }
+
+                    Log.d("StayOpsUpload", "sending id=${uploadItem.id} phone=${uploadItem.normalizedPhone ?: uploadItem.phoneNumber}")
                     val resp = uploadAgentApi.uploadCall(
                         file = filePart,
                         sourceType = sourceType,
                         fileFingerprint = fp,
                         deviceId = devId,
-                        originalFileName = textPartOrNull(item.fileName),
+                        originalFileName = textPartOrNull(uploadItem.fileName),
                         mimeType = textPartOrNull(mimeType),
-                        // ISO timestamp is optional; best-effort from lastModified
-                        startedAt = textPartOrNull(java.time.Instant.ofEpochMilli(item.lastModifiedAt).toString()),
-                        phoneNumber = null,
-                        direction = null,
+                        startedAt = textPartOrNull(java.time.Instant.ofEpochMilli(startedAtMs).toString()),
+                        phoneNumber = textPartOrNull(RecordingCallMetadata.resolveUploadPhone(uploadItem)),
+                        direction = textPartOrNull(uploadItem.direction),
+                        contactName = textPartOrNull(uploadItem.contactName),
+                        callLogMatchedAt = textPartOrNull(callLogMatchedAtIso),
+                        callLogMatchDeltaSec = intPartOrNull(uploadItem.callLogMatchDeltaSec),
                     )
 
                     val now = System.currentTimeMillis()
-                    Log.d("StayOpsUpload", "response ${resp.code()} id=${item.id}")
+                    Log.d("StayOpsUpload", "response ${resp.code()} id=${uploadItem.id}")
 
                     if (resp.code() == 409) {
                         val raw = resp.errorBody()?.string()
@@ -223,13 +253,26 @@ class UploadQueueWorker(
             val summary = "[$ts] 업로드 ${uploadedCount}건, 중복 ${duplicateCount}건, 실패 ${failedCount}건 (전체 ${pending.size}건)"
             Log.d("StayOpsUpload", "done: uploaded=$uploadedCount dup=$duplicateCount failed=$failedCount")
             debugStore.put(WorkerDebugStore.KEY_UPLOAD_LAST, summary)
-            if (failedCount > 0) return Result.retry()
+            if (failedCount > 0) {
+                SyncStatusTracker.onSyncChainFinished(
+                    applicationContext,
+                    success = false,
+                    errorMsg = summary,
+                )
+                return Result.retry()
+            }
             Log.d("StayOpsUpload", "UploadQueueWorker success")
+            SyncStatusTracker.onSyncChainFinished(applicationContext, success = true)
             return Result.success()
         } catch (e: Exception) {
             Log.e("StayOpsUpload", "doWork failed", e)
             val ts = java.time.LocalTime.now().toString().substring(0, 5)
             debugStore.put(WorkerDebugStore.KEY_UPLOAD_LAST, "[$ts] 오류: ${e.message ?: e.javaClass.simpleName}")
+            SyncStatusTracker.onSyncChainFinished(
+                applicationContext,
+                success = false,
+                errorMsg = e.message ?: e.javaClass.simpleName,
+            )
             return Result.failure()
         }
         }
@@ -283,7 +326,11 @@ class UploadQueueWorker(
                     .build()
 
                 val db = Room.databaseBuilder(appContext, AppDatabase::class.java, "stay_ops_call.db")
-                    .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+                    .addMigrations(
+                        AppDatabase.MIGRATION_1_2,
+                        AppDatabase.MIGRATION_2_3,
+                        AppDatabase.MIGRATION_3_4,
+                    )
                     .build()
 
                 val logging = HttpLoggingInterceptor().apply {

@@ -25,6 +25,13 @@ data class CallRecordingEntity(
     val remoteCallId: String? = null,
     val remoteStatus: String? = null,
     val errorMessage: String? = null,
+    val phoneNumber: String? = null,
+    val normalizedPhone: String? = null,
+    val direction: String? = null,
+    val contactName: String? = null,
+    val recordedAtFromFilename: Long? = null,
+    val callLogMatchedAt: Long? = null,
+    val callLogMatchDeltaSec: Int? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
