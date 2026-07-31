@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "backfill:reservation-drafts": "node --env-file=.env.local --import tsx scripts/backfillReservationDrafts.ts"
+    "backfill:reservation-drafts": "node --env-file=.env.local --import tsx scripts/backfillReservationDrafts.ts",
+    "verify:uncertain-state": "tsx scripts/verifyUncertainTerminalState.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

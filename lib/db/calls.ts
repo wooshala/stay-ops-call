@@ -763,16 +763,38 @@ export interface CallAnalysisSkippedPatch {
   analysis_version: string | null;
   transcript_cleaned: string | null;
   analysis_input_text: string | null;
+  /**
+   * LLM 생략 사유 코드. 미지정 시 기존 동작(`short_transcript`) 유지.
+   * 예: `transcript_uncertain`
+   */
+  analysis_error_code?: string;
+  /**
+   * 사람이 읽는 생략 사유. **transcript 원문·개인정보를 담지 않는다.**
+   * 미지정 시 기존 문구 유지.
+   */
+  analysis_error_message?: string;
 }
 
+const SKIPPED_DEFAULT_ERROR_CODE = "short_transcript";
+const SKIPPED_DEFAULT_ERROR_MESSAGE =
+  "공백 제외 5자 미만 또는 인사 수준 문장으로 LLM 분석을 생략했습니다.";
+
 /**
- * 짧은 STT 등 LLM 생략 시. `analysis_status = warning`, `analysis_error_code = short_transcript`.
+ * LLM 분석을 생략하고 **종결** 처리한다. `analysis_status = warning`.
+ *
+ * queued 로 남기면 재수거 워커가 없어 영구 정체되므로(CALL-ANALYSIS-QUEUE-001),
+ * 생략 결정이 내려진 통화는 반드시 이 helper 로 종결 상태를 기록해야 한다.
+ *
+ * 사유 코드/문구는 patch 로 주입할 수 있고, 미지정 시 기존 short_transcript 동작을 유지한다.
  */
 export async function tryUpdateCallAnalysisSkipped(
   id: string,
   patch: CallAnalysisSkippedPatch,
 ): Promise<AnalysisPersistLevelDb> {
   const supabase = getServiceSupabase();
+  const errCode = patch.analysis_error_code?.trim() || SKIPPED_DEFAULT_ERROR_CODE;
+  const errMessage =
+    patch.analysis_error_message?.trim() || SKIPPED_DEFAULT_ERROR_MESSAGE;
   const layers: Record<string, unknown>[] = [
     {
       summary: patch.summary,
@@ -783,9 +805,8 @@ export async function tryUpdateCallAnalysisSkipped(
       transcript_cleaned: patch.transcript_cleaned,
       analysis_input_text: patch.analysis_input_text,
       analysis_status: "warning",
-      analysis_error_code: "short_transcript",
-      analysis_error_message:
-        "공백 제외 5자 미만 또는 인사 수준 문장으로 LLM 분석을 생략했습니다.",
+      analysis_error_code: errCode,
+      analysis_error_message: errMessage,
       quote_draft: null,
     },
     {
@@ -797,9 +818,8 @@ export async function tryUpdateCallAnalysisSkipped(
       transcript_cleaned: patch.transcript_cleaned,
       analysis_input_text: patch.analysis_input_text,
       analysis_status: "warning",
-      analysis_error_code: "short_transcript",
-      analysis_error_message:
-        "공백 제외 5자 미만 또는 인사 수준 문장으로 LLM 분석을 생략했습니다.",
+      analysis_error_code: errCode,
+      analysis_error_message: errMessage,
       quote_draft: null,
       analysis_persist_level: "full",
     },
@@ -810,9 +830,8 @@ export async function tryUpdateCallAnalysisSkipped(
       analysis_confidence: patch.analysis_confidence,
       analysis_version: patch.analysis_version,
       analysis_status: "warning",
-      analysis_error_code: "short_transcript",
-      analysis_error_message:
-        "짧은 통화로 분석 생략(warning 상태 fallback).",
+      analysis_error_code: errCode,
+      analysis_error_message: errMessage,
       analysis_persist_level: "full",
     },
   ];
@@ -1083,5 +1102,50 @@ export async function listPhoneContacts(params: {
   return {
     rows: (data ?? []) as import("@/lib/types/database").PhoneContactRow[],
     total: count ?? 0,
+  };
+}
+
+/** 분석 큐 정체 감시 지표 (count·최고령만, 개별 통화 정보 없음) */
+export type StuckAnalysisQueueStats = {
+  /** stt 는 끝났는데 analysis_status 가 1시간 넘게 queued 인 건수. 정상값 0 */
+  stuckCount: number;
+  /** 가장 오래된 정체 건의 경과 시간(분). 없으면 null */
+  oldestAgeMinutes: number | null;
+};
+
+/**
+ * `analysis_status='queued' AND stt_status='completed' AND created_at < now()-1h` 집계.
+ *
+ * 재수거 워커가 없어 queued 는 스스로 풀리지 않는다(CALL-ANALYSIS-QUEUE-001).
+ * 1건 이상이면 종결 상태 기록이 누락된 경로가 있다는 신호다.
+ *
+ * transcript·전화번호·summary 는 조회하지 않는다 — count 와 최고령 시각만 본다.
+ */
+export async function getStuckAnalysisQueueStats(
+  thresholdMinutes = 60,
+): Promise<StuckAnalysisQueueStats> {
+  const supabase = getServiceSupabase();
+  const cutoff = new Date(Date.now() - thresholdMinutes * 60_000).toISOString();
+
+  const { data, error, count } = await supabase
+    .from("calls")
+    .select("created_at", { count: "exact" })
+    .eq("analysis_status", "queued")
+    .eq("stt_status", "completed")
+    .lt("created_at", cutoff)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (error) {
+    console.error("[calls] getStuckAnalysisQueueStats error", error);
+    throw error;
+  }
+
+  const oldest = (data ?? [])[0] as { created_at?: string } | undefined;
+  return {
+    stuckCount: count ?? 0,
+    oldestAgeMinutes: oldest?.created_at
+      ? Math.round((Date.now() - new Date(oldest.created_at).getTime()) / 60_000)
+      : null,
   };
 }
