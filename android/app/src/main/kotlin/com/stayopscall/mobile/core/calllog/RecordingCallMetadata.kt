@@ -12,6 +12,7 @@ object RecordingCallMetadata {
         var contactName: String? = parsed.contactNameFromFilename
         var callLogMatchedAt: Long? = null
         var callLogMatchDeltaSec: Int? = null
+        var durationSec: Int? = null
 
         val targetMs = parsed.recordedAtFromFilename
         if (targetMs != null) {
@@ -22,6 +23,7 @@ object RecordingCallMetadata {
                 direction = match.direction
                 callLogMatchedAt = match.callLogDate
                 callLogMatchDeltaSec = match.callLogMatchDeltaSec
+                durationSec = match.durationSec
                 if (contactName == null) contactName = match.contactName
             }
         }
@@ -39,6 +41,7 @@ object RecordingCallMetadata {
             recordedAtFromFilename = parsed.recordedAtFromFilename,
             callLogMatchedAt = callLogMatchedAt,
             callLogMatchDeltaSec = callLogMatchDeltaSec,
+            durationSec = durationSec,
         )
     }
 

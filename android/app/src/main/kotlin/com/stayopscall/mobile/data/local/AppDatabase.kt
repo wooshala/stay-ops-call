@@ -13,7 +13,7 @@ import com.stayopscall.mobile.data.local.entity.DeviceRegistrationEntity
 
 @Database(
     entities = [CallRecordingEntity::class, DeviceRegistrationEntity::class, AppSettingEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -69,6 +69,14 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `recordedAtFromFilename` INTEGER")
                 db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `callLogMatchedAt` INTEGER")
                 db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `callLogMatchDeltaSec` INTEGER")
+            }
+        }
+
+        // CallLog.Calls.DURATION(초) 보존 — 업로드 시 multipart duration_sec 로 전송한다.
+        // 기존 행은 NULL 유지(과거 통화는 CallLog 재조회가 불가하므로 소급하지 않는다).
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `durationSec` INTEGER")
             }
         }
     }
