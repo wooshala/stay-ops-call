@@ -6,31 +6,37 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.room.Room
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import com.stayopscall.mobile.core.calllog.RecordingCallMetadata
 import com.stayopscall.mobile.core.storage.RecordingFolderStore
 import com.stayopscall.mobile.core.storage.WorkerDebugStore
+import com.stayopscall.mobile.core.sync.SyncStatusTracker
 import com.stayopscall.mobile.data.local.AppDatabase
 import com.stayopscall.mobile.data.local.RecordingStatus
 import com.stayopscall.mobile.data.local.entity.CallRecordingEntity
 import kotlinx.coroutines.runBlocking
 
 private const val TAG_SCAN = "StayOpsScan"
+private const val SCAN_TOP_N = 50
 
 class ScanRecordingFolderWorker(
     appContext: Context,
     params: WorkerParameters
 ) : Worker(appContext, params) {
+
     override fun doWork(): Result {
         val debugStore = WorkerDebugStore(applicationContext)
-        Log.d(TAG_SCAN, "doWork() entered")
-        debugStore.put(WorkerDebugStore.KEY_SCAN_LAST, "entered doWork")
-
         return try {
             runScan(debugStore)
         } catch (e: Throwable) {
             Log.e(TAG_SCAN, "doWork exception", e)
             debugStore.put(
                 WorkerDebugStore.KEY_SCAN_LAST,
-                "failed: exception ${e.javaClass.simpleName}: ${e.message}"
+                "failed: ${e.javaClass.simpleName}: ${e.message}"
+            )
+            SyncStatusTracker.onSyncChainFinished(
+                applicationContext,
+                success = false,
+                errorMsg = e.message ?: e.javaClass.simpleName,
             )
             Result.failure()
         }
@@ -38,92 +44,67 @@ class ScanRecordingFolderWorker(
 
     private fun runScan(debugStore: WorkerDebugStore): Result {
         val folderStore = RecordingFolderStore(applicationContext)
-        val cr = applicationContext.contentResolver
         val k = WorkerDebugStore.KEY_SCAN_LAST
 
-        fun mark(message: String) {
-            Log.d(TAG_SCAN, message)
-            debugStore.put(k, message)
+        fun mark(msg: String) {
+            Log.d(TAG_SCAN, msg)
+            debugStore.put(k, msg)
         }
 
-        val treeUri = folderStore.getFolderUri().also {
-            mark("loaded treeUri")
-        }
-        if (treeUri == null) {
-            Log.w(TAG_SCAN, "treeUri null")
-            debugStore.put(k, "failed: treeUri null")
+        mark("scan optimized start")
+
+        val treeUri = folderStore.getFolderUri() ?: run {
+            mark("failed: treeUri null")
+            SyncStatusTracker.onSyncChainFinished(applicationContext, success = false, errorMsg = "treeUri null")
             return Result.failure()
         }
 
-        val persistedRead = cr.persistedUriPermissions.any { p ->
-            p.uri == treeUri && p.isReadPermission
-        }
-        mark("persisted permission checked (read=$persistedRead)")
-
-        val root = DocumentFile.fromTreeUri(applicationContext, treeUri)
-        val fromTreeOk = root != null
-        val exists = root?.exists() == true
-        val canRead = root?.canRead() == true
-        val isDirectory = root?.isDirectory == true
-        if (fromTreeOk) mark("fromTreeUri ok")
-
-        mark("listFiles start (root)")
-        val listResult = runCatching { root?.listFiles() }
-        mark("listFiles call finished (root)")
-        val listFilesOk = listResult.isSuccess
-        val listFilesError = listResult.exceptionOrNull()?.message
-        val rootChildren = listResult.getOrNull()
-        val rootFileCount = rootChildren?.count { it.isFile } ?: 0
-        mark("listFiles done count=$rootFileCount (root)")
-
-        val diag = "treeUriNull=false, persistedRead=$persistedRead, fromTreeUri=$fromTreeOk, " +
-            "exists=$exists, canRead=$canRead, isDirectory=$isDirectory, " +
-            "listFilesOk=$listFilesOk, rootFileCount=$rootFileCount"
-
-        Log.d(TAG_SCAN, diag)
-
-        if (!fromTreeOk || root == null) {
-            mark("failed: fromTreeUri null ($diag)")
-            return Result.failure()
-        }
-        if (!exists) {
-            mark("failed: root not exists ($diag)")
-            return Result.failure()
-        }
-        if (!canRead) {
-            mark("failed: cannot read root ($diag)")
-            return Result.failure()
-        }
-        if (!listFilesOk) {
-            mark("failed: listFiles threw: ${listFilesError ?: "unknown"} ($diag)")
+        val root = DocumentFile.fromTreeUri(applicationContext, treeUri) ?: run {
+            mark("failed: fromTreeUri null")
+            SyncStatusTracker.onSyncChainFinished(applicationContext, success = false, errorMsg = "fromTreeUri null")
             return Result.failure()
         }
 
-        val scanStart = System.currentTimeMillis()
-        mark("scan recursion start")
-        val allFiles = flattenFiles(
-            root = root,
-            onProgress = { index, name, queueSize ->
-                if (index == 1 || index % 25 == 0) {
-                    mark("scan item $index : $name (queue=$queueSize)")
-                } else {
-                    Log.d(TAG_SCAN, "scan item $index : $name (queue=$queueSize)")
-                }
-            }
-        )
-        mark("scan recursion done elapsed=${System.currentTimeMillis() - scanStart}ms")
-        val audioFiles = allFiles.filter { isAudioFile(it) }
-        Log.d(TAG_SCAN, "audioFiles found=${audioFiles.size}")
+        val children = runCatching { root.listFiles() }.getOrElse {
+            mark("failed: listFiles: ${it.message}")
+            SyncStatusTracker.onSyncChainFinished(
+                applicationContext,
+                success = false,
+                errorMsg = it.message,
+            )
+            return Result.failure()
+        }
+
+        // 직접 자식만 검사 (재귀 없음), 최신순 정렬 후 상위 N개만
+        val candidates = children
+            .filter { it.isFile && isAudioFile(it) }
+            .sortedByDescending { it.lastModified() }
+            .take(SCAN_TOP_N)
+
+        mark("candidates=${candidates.size}")
+
+        if (candidates.isEmpty()) {
+            val ts = java.time.LocalTime.now().toString().substring(0, 5)
+            mark("[$ts] 스캔 완료: 신규 0건")
+            Log.d(TAG_SCAN, "ScanRecordingFolderWorker success")
+            return Result.success()
+        }
 
         val dao = ScanWorkerDeps.get(applicationContext).callRecordingDao()
-        var insertedCount = 0
-        var skippedCount = 0
-        val now = System.currentTimeMillis()
 
-        audioFiles.forEachIndexed { idx, file ->
+        // DB에 이미 있는 URI 일괄 조회 → 신규 파일만 추려내기
+        val candidateUris = candidates.map { it.uri.toString() }
+        val existingUris = runBlocking { dao.findExistingUris(candidateUris) }.toSet()
+
+        val newFiles = candidates.filter { it.uri.toString() !in existingUris }
+        mark("new=${newFiles.size} skippedExisting=${candidates.size - newFiles.size}")
+
+        val now = System.currentTimeMillis()
+        var insertedCount = 0
+
+        for (file in newFiles) {
             try {
-                // TODO: compute real SHA-256 in a separate background step after pipeline is validated
-                val entity = CallRecordingEntity(
+                val base = CallRecordingEntity(
                     fileName = file.name ?: "unknown",
                     fileUri = file.uri.toString(),
                     fileSize = file.length(),
@@ -133,48 +114,22 @@ class ScanRecordingFolderWorker(
                     createdAt = now,
                     updatedAt = now
                 )
+                val entity = RecordingCallMetadata.enrichEntity(
+                    applicationContext,
+                    base.fileName,
+                    base,
+                )
                 val rowId = runBlocking { dao.insert(entity) }
-                if (rowId == -1L) skippedCount++ else insertedCount++
+                if (rowId != -1L) insertedCount++
             } catch (e: Exception) {
-                Log.e(TAG_SCAN, "insert failed file=${file.name}", e)
-                skippedCount++
+                Log.e(TAG_SCAN, "insert failed: ${file.name}", e)
             }
         }
 
         val ts = java.time.LocalTime.now().toString().substring(0, 5)
-        val summary = "[$ts] 스캔 완료: 오디오 ${audioFiles.size}개, 신규 ${insertedCount}건"
-        mark(summary)
+        mark("[$ts] 스캔 완료: 신규 ${insertedCount}건")
         Log.d(TAG_SCAN, "ScanRecordingFolderWorker success")
         return Result.success()
-    }
-
-    private fun flattenFiles(
-        root: DocumentFile,
-        onProgress: (index: Int, name: String, queueSize: Int) -> Unit
-    ): List<DocumentFile> {
-        val results = mutableListOf<DocumentFile>()
-        val stack = ArrayDeque<DocumentFile>()
-        stack.add(root)
-        var visited = 0
-        while (stack.isNotEmpty()) {
-            val current = stack.removeFirst()
-            val dirName = current.name ?: "(dir)"
-            Log.d(TAG_SCAN, "enter dir=$dirName")
-            val children = try {
-                current.listFiles()
-            } catch (e: Throwable) {
-                Log.e(TAG_SCAN, "listFiles failed dir=$dirName", e)
-                continue
-            }
-            Log.d(TAG_SCAN, "listFiles done dir=$dirName children=${children.size}")
-            children.forEach { child ->
-                visited++
-                onProgress(visited, child.name ?: "(unknown)", stack.size)
-                if (child.isDirectory) stack.add(child)
-                if (child.isFile) results.add(child)
-            }
-        }
-        return results
     }
 
     private fun isAudioFile(file: DocumentFile): Boolean {
@@ -183,6 +138,28 @@ class ScanRecordingFolderWorker(
         val name = file.name?.lowercase().orEmpty()
         return name.endsWith(".m4a") || name.endsWith(".mp3") || name.endsWith(".aac") ||
             name.endsWith(".wav") || name.endsWith(".3gp") || name.endsWith(".amr") || name.endsWith(".ogg")
+    }
+
+    // 전체 재귀 스캔 — 필요 시 수동 호출용으로 보존
+    @Suppress("unused")
+    private fun flattenFiles(root: DocumentFile): List<DocumentFile> {
+        val results = mutableListOf<DocumentFile>()
+        val stack = ArrayDeque<DocumentFile>()
+        stack.add(root)
+        while (stack.isNotEmpty()) {
+            val current = stack.removeFirst()
+            val children = try {
+                current.listFiles()
+            } catch (e: Throwable) {
+                Log.e(TAG_SCAN, "listFiles failed dir=${current.name}", e)
+                continue
+            }
+            children.forEach { child ->
+                if (child.isDirectory) stack.add(child)
+                if (child.isFile) results.add(child)
+            }
+        }
+        return results
     }
 
     private object ScanWorkerDeps {
@@ -196,7 +173,11 @@ class ScanRecordingFolderWorker(
                     AppDatabase::class.java,
                     "stay_ops_call.db"
                 )
-                    .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+                    .addMigrations(
+                        AppDatabase.MIGRATION_1_2,
+                        AppDatabase.MIGRATION_2_3,
+                        AppDatabase.MIGRATION_3_4,
+                    )
                     .build()
                     .also { db = it }
             }

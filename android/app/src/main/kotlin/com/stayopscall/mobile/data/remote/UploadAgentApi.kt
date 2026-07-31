@@ -25,6 +25,9 @@ suspend fun uploadCall(
 @Part("started_at") startedAt: RequestBody?,
 @Part("phone_number") phoneNumber: RequestBody?,
 @Part("direction") direction: RequestBody?,
+@Part("contact_name") contactName: RequestBody?,
+@Part("call_log_matched_at") callLogMatchedAt: RequestBody?,
+@Part("call_log_match_delta_sec") callLogMatchDeltaSec: RequestBody?,
 ): Response<UploadCallResponse>
 }
 
