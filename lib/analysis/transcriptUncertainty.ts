@@ -28,6 +28,20 @@ const SHORT_AUDIO_SEC = 15;
 const SHORT_TRANSCRIPT_CHARS = 40;
 const HALLUCINATION_CHARS_PER_SEC = 12;
 
+/**
+ * 같은 세그먼트가 몇 번 반복되면 "반복 통화"로 볼지.
+ *
+ * 2회였을 때 실 통화 98건 중 23건이 repetitive 로 걸렸고, 그중 21건이 오직
+ * `maxRepeat === 2` 때문이었다. "네 알겠습니다" 류가 두 번 나오는 것은 정상 통화에서
+ * 매우 흔해, 96~918자짜리 정상 통화 20건이 LLM 분석에서 제외되고 있었다.
+ * 3회로 올리면 그 20건이 모두 구제되고, 반복 정황이 실제로 강한 건(maxRepeat>=3)은
+ * 그대로 검출된다 — 놓치는 건 0건.  (CALL-ANALYSIS-QUEUE-003 실측)
+ */
+const REPETITIVE_MIN_SEGMENT_REPEAT = 3;
+
+/** 서로 다른 세그먼트 비율이 이보다 낮으면 산발적 반복으로 본다 */
+const REPETITIVE_MAX_UNIQUE_RATIO = 0.55;
+
 /** STT 환각에 자주 끼어드는 일반어 — 숙박 의도로 보지 않음 */
 const LODGING_KEYWORD =
   /예약|숙박|체크인|체크아웃|입실|퇴실|객실|투숙|요금|가격|스탠다드|디럭스|연장|취소|환불|대실|침대|조식|주차|견적|단체|\d{2,4}호|룸|호실|내일\s*밤|모레|인원|성인|아동/;
@@ -50,11 +64,11 @@ function isRepetitiveTranscript(transcript: string): boolean {
   }
 
   for (const count of seen.values()) {
-    if (count >= 2) return true;
+    if (count >= REPETITIVE_MIN_SEGMENT_REPEAT) return true;
   }
 
   const unique = seen.size;
-  return unique / segments.length < 0.55;
+  return unique / segments.length < REPETITIVE_MAX_UNIQUE_RATIO;
 }
 
 function hasMeaningfulLodgingKeyword(transcript: string): boolean {

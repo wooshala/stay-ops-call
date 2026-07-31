@@ -92,6 +92,40 @@ if (repAssess) {
     !patch.analysis_error_message?.includes("여보세요"));
 }
 
+// ── 3-b. repetitive 임계치 계약 (CALL-ANALYSIS-QUEUE-003) ─────
+console.log("[3-b] repetitive 임계치 — 2회는 통과, 3회는 보류");
+
+// (1) 정상 긴 transcript — 반복 없음
+const longNormal =
+  "안녕하세요 다음 주 금요일에 디럭스 객실 두 개 예약 가능한지 문의드립니다. " +
+  "성인 네 명이고 아이는 없습니다. 체크인은 오후 다섯시쯤 예정이고요. " +
+  "주차는 두 대 필요합니다. 조식 포함 요금도 함께 알려주시면 좋겠습니다. " +
+  "혹시 연박 할인이 있는지도 궁금합니다.";
+check("정상 긴 통화 → uncertain 아님",
+  assessTranscriptUncertainty({ transcript: longNormal, durationSec: 180 }) === null);
+
+// (2) "네 알겠습니다" 2회 — 정상 통화에서 흔함 → 보류하지 않아야 함
+const twiceAck =
+  "네 알겠습니다. 내일 오후에 체크인 예정이고 성인 두 명입니다. " +
+  "주차 한 대 가능한지 확인 부탁드립니다. 네 알겠습니다. " +
+  "그럼 그렇게 예약해 주세요 감사합니다.";
+const twiceAssess = assessTranscriptUncertainty({ transcript: twiceAck, durationSec: 90 });
+check("동일 문장 2회 반복 → repetitive 아님",
+  !twiceAssess?.warnings.includes("repetitive_transcript"),
+  twiceAssess ? `warnings=${twiceAssess.warnings.join(",")}` : undefined);
+
+// (3) 실제 반복 음성 3회 — 여전히 검출되어야 함
+const thrice =
+  "여보세요 들리세요. 여보세요 들리세요. 여보세요 들리세요. 여보세요 들리세요.";
+check("동일 문장 3회 이상 → repetitive 검출 유지",
+  !!assessTranscriptUncertainty({ transcript: thrice, durationSec: 60 })
+    ?.warnings.includes("repetitive_transcript"));
+
+// (4) 짧은 transcript — 임계치 변경과 무관하게 그대로 보류
+const shortStill = assessTranscriptUncertainty({ transcript: "네", durationSec: 30 });
+check("짧은 transcript → short_transcript 유지",
+  !!shortStill?.warnings.includes("short_transcript"));
+
 // ── 4·6. 소스 계약 (queued 잔류 방지 · 실패 은폐 금지) ──────────
 console.log("[4] 파이프라인 소스 계약");
 const src = readFileSync(
