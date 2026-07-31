@@ -145,6 +145,27 @@ check("실패 시 오류 로그(조용한 성공 금지)",
 check("uncertain 로그에 summary 원문을 싣지 않음",
   !/summary:\s*analysis\.summary/.test(uncertainBlock));
 
+// ── 4-b. KPI 계약 ─────────────────────────────────────────────
+console.log("[4-b] health KPI 계약");
+const healthSrc = readFileSync(
+  fileURLToPath(new URL("../app/api/health/route.ts", import.meta.url)),
+  "utf8",
+);
+check("uncertainReason KPI 노출", healthSrc.includes("uncertainReason"));
+check("KPI 도 내부 토큰 게이트 안에서만 집계",
+  healthSrc.indexOf("getUncertainReasonStats()") >
+    healthSrc.indexOf("getBearerTokenFromRequest(request) === internalToken"));
+
+const dbSrc = readFileSync(
+  fileURLToPath(new URL("../lib/db/calls.ts", import.meta.url)),
+  "utf8",
+);
+const kpiFn = dbSrc.slice(dbSrc.indexOf("export async function getUncertainReasonStats"));
+check("KPI 쿼리가 transcript/전화번호/summary 를 select 하지 않음",
+  !/select\("[^"]*(transcript|phone|summary)/.test(kpiFn.slice(0, 900)));
+check("사유는 secondary_tags 의 warn_ 접두사에서 추출",
+  kpiFn.includes('startsWith("warn_")'));
+
 // ── 5. pending_events 기존 동작 유지 ──────────────────────────
 console.log("[5] pending_events 갱신 경로 유지");
 check("updatePendingEventAfterStt 호출 유지",

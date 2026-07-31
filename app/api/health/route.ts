@@ -1,5 +1,8 @@
 import { getBearerTokenFromRequest } from "@/lib/auth/internalApi";
-import { getStuckAnalysisQueueStats } from "@/lib/db/calls";
+import {
+  getStuckAnalysisQueueStats,
+  getUncertainReasonStats,
+} from "@/lib/db/calls";
 import { getOpenAIConfigProbe } from "@/lib/openai/client";
 
 export const runtime = "nodejs";
@@ -27,11 +30,20 @@ export async function GET(request: Request) {
    */
   let analysisQueue: Awaited<ReturnType<typeof getStuckAnalysisQueueStats>> | null =
     null;
+  /**
+   * uncertain 종결 건의 사유별 집계(최근 7일). 판정 임계치 조정 효과를
+   * DB 를 직접 뒤지지 않고 확인하기 위한 KPI.
+   */
+  let uncertainReason: Awaited<ReturnType<typeof getUncertainReasonStats>> | null =
+    null;
   let analysisQueueError: string | null = null;
   const internalToken = process.env.INTERNAL_API_TOKEN?.trim();
   if (internalToken && getBearerTokenFromRequest(request) === internalToken) {
     try {
-      analysisQueue = await getStuckAnalysisQueueStats();
+      [analysisQueue, uncertainReason] = await Promise.all([
+        getStuckAnalysisQueueStats(),
+        getUncertainReasonStats(),
+      ]);
     } catch (e) {
       analysisQueueError = e instanceof Error ? e.message : "query failed";
     }
@@ -66,6 +78,7 @@ export async function GET(request: Request) {
     },
     // 내부 토큰 없이 호출하면 null (집계 생략)
     analysisQueue,
+    uncertainReason,
     analysisQueueError,
   });
 }
