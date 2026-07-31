@@ -28,6 +28,12 @@ suspend fun uploadCall(
 @Part("contact_name") contactName: RequestBody?,
 @Part("call_log_matched_at") callLogMatchedAt: RequestBody?,
 @Part("call_log_match_delta_sec") callLogMatchDeltaSec: RequestBody?,
+/**
+ * CallLog.Calls.DURATION — **초 단위 정수**. 서버는 `calls.duration_sec` 로 저장한다.
+ * 값을 모르면 part 를 생략(null)한다. 0 으로 위장하지 않는다.
+ * relay 의 `duration_seconds` 와 이름이 다르므로 혼동 금지.
+ */
+@Part("duration_sec") durationSec: RequestBody?,
 ): Response<UploadCallResponse>
 }
 

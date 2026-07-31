@@ -167,6 +167,13 @@ class UploadQueueWorker(
                     }
 
                     Log.d("StayOpsUpload", "sending id=${uploadItem.id} phone=${uploadItem.normalizedPhone ?: uploadItem.phoneNumber}")
+                    // duration 전송 여부 진단 — 전화번호·파일명과 묶지 않는다
+                    Log.i(
+                        "StayOpsUpload",
+                        "[UPLOAD_DURATION] recordingId=${uploadItem.id} " +
+                            "hasDuration=${uploadItem.durationSec != null} " +
+                            "durationSec=${uploadItem.durationSec ?: -1}",
+                    )
                     val resp = uploadAgentApi.uploadCall(
                         file = filePart,
                         sourceType = sourceType,
@@ -180,6 +187,8 @@ class UploadQueueWorker(
                         contactName = textPartOrNull(uploadItem.contactName),
                         callLogMatchedAt = textPartOrNull(callLogMatchedAtIso),
                         callLogMatchDeltaSec = intPartOrNull(uploadItem.callLogMatchDeltaSec),
+                        // 초 단위 그대로. 음수·0 은 보내지 않는다(intPartOrNull → null → part 생략)
+                        durationSec = intPartOrNull(uploadItem.durationSec?.takeIf { it > 0 }),
                     )
 
                     val now = System.currentTimeMillis()
@@ -330,6 +339,7 @@ class UploadQueueWorker(
                         AppDatabase.MIGRATION_1_2,
                         AppDatabase.MIGRATION_2_3,
                         AppDatabase.MIGRATION_3_4,
+                        AppDatabase.MIGRATION_4_5,
                     )
                     .build()
 

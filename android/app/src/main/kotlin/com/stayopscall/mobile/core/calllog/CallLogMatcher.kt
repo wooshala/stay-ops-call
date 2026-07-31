@@ -14,6 +14,12 @@ data class CallLogMatchResult(
     val callLogDate: Long,
     val callLogMatchDeltaSec: Int,
     val contactName: String?,
+    /**
+     * CallLog.Calls.DURATION — **초 단위**. 밀리초로 변환하지 않는다.
+     * 통화시간을 알 수 없으면(0 이하) null 로 둔다. 0 으로 위장하지 않는다.
+     * 서버 계약: multipart `duration_sec` → `calls.duration_sec`
+     */
+    val durationSec: Int?,
 )
 
 object CallLogMatcher {
@@ -99,6 +105,8 @@ object CallLogMatcher {
             callLogDate = best.date,
             callLogMatchDeltaSec = (abs(best.date - targetMs) / 1000).toInt(),
             contactName = contactName,
+            // CallLog 는 초 단위. 0 이하는 "알 수 없음"이므로 null 로 남긴다.
+            durationSec = best.duration.takeIf { it > 0 }?.toInt(),
         )
     }
 

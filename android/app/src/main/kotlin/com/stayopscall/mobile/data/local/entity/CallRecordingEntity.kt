@@ -32,6 +32,8 @@ data class CallRecordingEntity(
     val recordedAtFromFilename: Long? = null,
     val callLogMatchedAt: Long? = null,
     val callLogMatchDeltaSec: Int? = null,
+    /** CallLog.Calls.DURATION — 초 단위. 업로드 시 multipart `duration_sec` 로 전송 */
+    val durationSec: Int? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
