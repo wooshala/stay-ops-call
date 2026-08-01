@@ -1,0 +1,7 @@
+# Android Gradle module build outputs — 절대 커밋하지 않는다.
+#
+# 이 파일이 없어서 android/app/build/** 2,108 개가 tracked 상태였고,
+# git checkout 시 과거 커밋본 APK 가 되살아나 잘못된 APK 를 설치하는 사고가 있었다.
+# (android/.gitignore 의 `/build` 는 앞의 `/` 때문에 android/build 만 무시한다)
+/build
+.cxx
