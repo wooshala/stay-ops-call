@@ -21,8 +21,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
 import com.stayopscall.mobile.core.storage.RecordingFolderStore
 import com.stayopscall.mobile.core.storage.WorkerDebugStore
 import com.stayopscall.mobile.core.sync.RecordingSyncTrigger
@@ -56,12 +54,7 @@ fun HomeScreen(
             lastSync = debugStore.get(WorkerDebugStore.KEY_SYNC_LAST)
             syncStatus = debugStore.get(WorkerDebugStore.KEY_SYNC_STATUS)
             syncStatusDetail = debugStore.get(WorkerDebugStore.KEY_SYNC_STATUS_DETAIL)
-            val workInfos = WorkManager.getInstance(context)
-                .getWorkInfosForUniqueWork(RecordingSyncTrigger.UNIQUE_WORK_NAME)
-                .get()
-            isWorkRunning = workInfos.any {
-                it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED
-            }
+            isWorkRunning = RecordingSyncTrigger.isSyncWorkActive(context)
         }
     }
 
