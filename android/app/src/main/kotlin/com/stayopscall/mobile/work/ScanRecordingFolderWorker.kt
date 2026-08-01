@@ -7,8 +7,12 @@ import androidx.room.Room
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.stayopscall.mobile.core.calllog.RecordingCallMetadata
+import com.stayopscall.mobile.core.calllog.RecordingFilenameParser
 import com.stayopscall.mobile.core.storage.RecordingFolderStore
 import com.stayopscall.mobile.core.storage.WorkerDebugStore
+import com.stayopscall.mobile.core.sync.RecordingSyncTrigger
+import com.stayopscall.mobile.core.sync.ScanCandidateLogic
+import com.stayopscall.mobile.core.sync.ScanProgressStore
 import com.stayopscall.mobile.core.sync.SyncStatusTracker
 import com.stayopscall.mobile.data.local.AppDatabase
 import com.stayopscall.mobile.data.local.RecordingStatus
@@ -16,154 +20,329 @@ import com.stayopscall.mobile.data.local.entity.CallRecordingEntity
 import kotlinx.coroutines.runBlocking
 
 private const val TAG_SCAN = "StayOpsScan"
-private const val SCAN_TOP_N = 50
 
 class ScanRecordingFolderWorker(
     appContext: Context,
-    params: WorkerParameters
+    params: WorkerParameters,
 ) : Worker(appContext, params) {
 
     override fun doWork(): Result {
         val debugStore = WorkerDebugStore(applicationContext)
+        val progress = ScanProgressStore(applicationContext)
+        val mode = inputData.getString(KEY_MODE) ?: MODE_INCREMENTAL
+        val startOffset = inputData.getInt(KEY_RECONCILE_OFFSET, 0)
+        val runId = progress.beginRun(mode)
+        val startedAt = System.currentTimeMillis()
+
         return try {
-            runScan(debugStore)
+            runScan(debugStore, progress, mode, startOffset, startedAt, runId)
         } catch (e: Throwable) {
-            Log.e(TAG_SCAN, "doWork exception", e)
+            Log.e(TAG_SCAN, "doWork exception run=$runId", e)
             debugStore.put(
                 WorkerDebugStore.KEY_SCAN_LAST,
-                "failed: ${e.javaClass.simpleName}: ${e.message}"
+                "failed: ${e.javaClass.simpleName}",
             )
-            SyncStatusTracker.onSyncChainFinished(
+            progress.finish(ScanProgressStore.Result.FAILED)
+            SyncStatusTracker.onScanFinished(
                 applicationContext,
                 success = false,
-                errorMsg = e.message ?: e.javaClass.simpleName,
+                errorMsg = e.javaClass.simpleName,
             )
+            RecordingSyncTrigger.enqueueUpload(applicationContext)
             Result.failure()
         }
     }
 
-    private fun runScan(debugStore: WorkerDebugStore): Result {
-        val folderStore = RecordingFolderStore(applicationContext)
-        val k = WorkerDebugStore.KEY_SCAN_LAST
-
+    private fun runScan(
+        debugStore: WorkerDebugStore,
+        progress: ScanProgressStore,
+        mode: String,
+        startOffset: Int,
+        startedAt: Long,
+        runId: String,
+    ): Result {
         fun mark(msg: String) {
-            Log.d(TAG_SCAN, msg)
-            debugStore.put(k, msg)
+            Log.d(TAG_SCAN, "run=$runId $msg")
+            debugStore.put(WorkerDebugStore.KEY_SCAN_LAST, msg)
         }
 
-        mark("scan optimized start")
+        fun timedOut(where: String): Result {
+            mark("timed_out at=$where ${progress.snapshotLine()}")
+            progress.setPhase(ScanProgressStore.Phase.TIMED_OUT)
+            progress.finish(ScanProgressStore.Result.TIMED_OUT)
+            SyncStatusTracker.onScanFinished(
+                applicationContext,
+                success = false,
+                errorMsg = "timed_out:$where",
+            )
+            RecordingSyncTrigger.enqueueUpload(applicationContext)
+            return Result.failure()
+        }
 
+        fun checkTimeout(where: String): Result? {
+            if (ScanCandidateLogic.isPastSoftTimeout(startedAt, System.currentTimeMillis())) {
+                return timedOut(where)
+            }
+            return null
+        }
+
+        mark("scan start mode=$mode offset=$startOffset")
+
+        val folderStore = RecordingFolderStore(applicationContext)
         val treeUri = folderStore.getFolderUri() ?: run {
             mark("failed: treeUri null")
-            SyncStatusTracker.onSyncChainFinished(applicationContext, success = false, errorMsg = "treeUri null")
+            progress.finish(ScanProgressStore.Result.FAILED)
+            SyncStatusTracker.onScanFinished(applicationContext, success = false, errorMsg = "treeUri null")
             return Result.failure()
         }
 
         val root = DocumentFile.fromTreeUri(applicationContext, treeUri) ?: run {
             mark("failed: fromTreeUri null")
-            SyncStatusTracker.onSyncChainFinished(applicationContext, success = false, errorMsg = "fromTreeUri null")
+            progress.finish(ScanProgressStore.Result.FAILED)
+            SyncStatusTracker.onScanFinished(applicationContext, success = false, errorMsg = "fromTreeUri null")
             return Result.failure()
         }
 
+        progress.setPhase(ScanProgressStore.Phase.LIST_FILES_BEGIN)
+        val listStart = System.currentTimeMillis()
         val children = runCatching { root.listFiles() }.getOrElse {
-            mark("failed: listFiles: ${it.message}")
-            SyncStatusTracker.onSyncChainFinished(
-                applicationContext,
-                success = false,
-                errorMsg = it.message,
-            )
+            progress.recordTiming("listFiles_ms", System.currentTimeMillis() - listStart)
+            mark("failed: listFiles")
+            progress.finish(ScanProgressStore.Result.FAILED)
+            SyncStatusTracker.onScanFinished(applicationContext, success = false, errorMsg = "listFiles")
             return Result.failure()
         }
+        val listElapsed = System.currentTimeMillis() - listStart
+        progress.recordTiming("listFiles_ms", listElapsed)
+        progress.setPhase(ScanProgressStore.Phase.LIST_FILES_DONE)
+        progress.setCounts(enumerated = children.size)
+        mark("listFiles done count=${children.size} ms=$listElapsed")
 
-        // 직접 자식만 검사 (재귀 없음), 최신순 정렬 후 상위 N개만
-        val candidates = children
-            .filter { it.isFile && isAudioFile(it) }
-            .sortedByDescending { it.lastModified() }
-            .take(SCAN_TOP_N)
+        checkTimeout("after_listFiles")?.let { return it }
 
-        mark("candidates=${candidates.size}")
+        val probeStart = System.currentTimeMillis()
+        var isFileNameAccessMs = 0L
+        var lastModifiedMs = 0L
+        var estimatedProviderCalls = 1
+        val probes = ArrayList<ScanCandidateLogic.FileProbe>(children.size)
+        val docByUri = HashMap<String, DocumentFile>(children.size)
+        val incrementalCutoff = if (mode == MODE_INCREMENTAL) {
+            progress.lastSeenRecordingTimestamp()?.minus(ScanCandidateLogic.OVERLAP_MS)
+        } else {
+            null
+        }
 
-        if (candidates.isEmpty()) {
-            val ts = java.time.LocalTime.now().toString().substring(0, 5)
-            mark("[$ts] 스캔 완료: 신규 0건")
-            Log.d(TAG_SCAN, "ScanRecordingFolderWorker success")
+        for (child in children) {
+            checkTimeout("during_enumerate")?.let { return it }
+
+            val t0 = System.currentTimeMillis()
+            val isFile = child.isFile
+            estimatedProviderCalls++
+            if (!isFile) {
+                isFileNameAccessMs += System.currentTimeMillis() - t0
+                continue
+            }
+            val name = child.name
+            val type = child.type
+            estimatedProviderCalls += 2
+            isFileNameAccessMs += System.currentTimeMillis() - t0
+            if (!isAudioFile(name, type)) continue
+
+            val uri = child.uri.toString()
+            val parsedTs = name?.let { RecordingFilenameParser.parse(it).recordedAtFromFilename }
+
+            // Incremental fast-path: skip clearly-old filename timestamps without lastModified IPC.
+            if (incrementalCutoff != null && parsedTs != null && parsedTs < incrementalCutoff) {
+                continue
+            }
+
+            val t1 = System.currentTimeMillis()
+            val mtime = child.lastModified().takeIf { it > 0 } ?: 0L
+            estimatedProviderCalls++
+            lastModifiedMs += System.currentTimeMillis() - t1
+
+            val ranking = parsedTs ?: mtime
+            if (ranking <= 0L) continue
+            if (incrementalCutoff != null && ranking < incrementalCutoff) continue
+
+            probes.add(
+                ScanCandidateLogic.FileProbe(
+                    uri = uri,
+                    rankingTimestamp = ranking,
+                    mtime = mtime,
+                    hasFilenameTimestamp = parsedTs != null,
+                ),
+            )
+            docByUri[uri] = child
+        }
+        progress.recordTiming("isFile_name_type_ms", isFileNameAccessMs)
+        progress.recordTiming("lastModified_ms", lastModifiedMs)
+        progress.recordTiming("enumerate_total_ms", System.currentTimeMillis() - probeStart)
+
+        val sortStart = System.currentTimeMillis()
+        val checkpoint = progress.lastSeenRecordingTimestamp()?.let { ts ->
+            ScanCandidateLogic.Checkpoint(ts, progress.lastSeenUri())
+        }
+
+        val finalCandidates: List<ScanCandidateLogic.FileProbe>
+        var saveReconcileOffset: Int? = null
+        var markReconcileComplete = false
+
+        if (mode == MODE_FULL_RECONCILE) {
+            val (batch, more) = ScanCandidateLogic.filterReconcileBatch(probes, startOffset)
+            finalCandidates = batch
+            if (more) {
+                saveReconcileOffset = startOffset + batch.size
+            } else {
+                saveReconcileOffset = 0
+                markReconcileComplete = true
+            }
+        } else {
+            finalCandidates = ScanCandidateLogic.filterIncremental(probes, checkpoint)
+            saveReconcileOffset = null
+        }
+
+        progress.recordTiming("sort_filter_ms", System.currentTimeMillis() - sortStart)
+        progress.setPhase(ScanProgressStore.Phase.FILTER_DONE)
+        progress.setCounts(candidates = finalCandidates.size)
+        mark(
+            "filter done mode=$mode probes=${probes.size} candidates=${finalCandidates.size} " +
+                "estIpc=$estimatedProviderCalls",
+        )
+
+        checkTimeout("after_filter")?.let {
+            saveReconcileOffset?.let { off -> progress.setReconcileOffset(off) }
+            return it
+        }
+
+        if (finalCandidates.isEmpty()) {
+            if (mode == MODE_FULL_RECONCILE && markReconcileComplete) {
+                progress.markFullReconcileComplete()
+            }
+            progress.finish(ScanProgressStore.Result.SUCCESS)
+            mark("scan complete inserted=0")
+            SyncStatusTracker.onScanFinished(applicationContext, success = true)
+            RecordingSyncTrigger.enqueueUpload(applicationContext)
             return Result.success()
         }
 
         val dao = ScanWorkerDeps.get(applicationContext).callRecordingDao()
 
-        // DB에 이미 있는 URI 일괄 조회 → 신규 파일만 추려내기
-        val candidateUris = candidates.map { it.uri.toString() }
-        val existingUris = runBlocking { dao.findExistingUris(candidateUris) }.toSet()
+        val roomStart = System.currentTimeMillis()
+        val existingUris = runBlocking {
+            dao.findExistingUris(finalCandidates.map { it.uri })
+        }.toSet()
+        progress.recordTiming("room_compare_ms", System.currentTimeMillis() - roomStart)
+        progress.setPhase(ScanProgressStore.Phase.ROOM_COMPARE_DONE)
 
-        val newFiles = candidates.filter { it.uri.toString() !in existingUris }
-        mark("new=${newFiles.size} skippedExisting=${candidates.size - newFiles.size}")
+        val newProbes = finalCandidates.filter { it.uri !in existingUris }
+        mark("room compare new=${newProbes.size} existing=${finalCandidates.size - newProbes.size}")
+
+        checkTimeout("after_room")?.let {
+            saveReconcileOffset?.let { off -> progress.setReconcileOffset(off) }
+            return it
+        }
 
         val now = System.currentTimeMillis()
         var insertedCount = 0
+        var enrichMs = 0L
+        var insertMs = 0L
 
-        for (file in newFiles) {
+        for (probe in newProbes) {
+            checkTimeout("during_insert")?.let {
+                // Partial inserts kept; checkpoint not advanced
+                saveReconcileOffset?.let { off -> progress.setReconcileOffset(off) }
+                return it
+            }
+            val file = docByUri[probe.uri] ?: continue
             try {
+                val length = file.length()
+                estimatedProviderCalls++
                 val base = CallRecordingEntity(
                     fileName = file.name ?: "unknown",
-                    fileUri = file.uri.toString(),
-                    fileSize = file.length(),
-                    lastModifiedAt = file.lastModified().takeIf { it > 0 } ?: now,
+                    fileUri = probe.uri,
+                    fileSize = length,
+                    lastModifiedAt = probe.mtime.takeIf { it > 0 } ?: now,
                     sha256 = null,
                     status = RecordingStatus.Pending,
                     createdAt = now,
-                    updatedAt = now
+                    updatedAt = now,
                 )
+                val tEnrich = System.currentTimeMillis()
+                // Phase 6: upload API accepts null phone/direction — enrich kept, timed separately.
                 val entity = RecordingCallMetadata.enrichEntity(
                     applicationContext,
                     base.fileName,
                     base,
                 )
+                enrichMs += System.currentTimeMillis() - tEnrich
+
+                val tIns = System.currentTimeMillis()
                 val rowId = runBlocking { dao.insert(entity) }
+                insertMs += System.currentTimeMillis() - tIns
                 if (rowId != -1L) insertedCount++
             } catch (e: Exception) {
-                Log.e(TAG_SCAN, "insert failed: ${file.name}", e)
+                Log.e(TAG_SCAN, "insert failed run=$runId", e)
             }
         }
 
-        val ts = java.time.LocalTime.now().toString().substring(0, 5)
-        mark("[$ts] 스캔 완료: 신규 ${insertedCount}건")
-        Log.d(TAG_SCAN, "ScanRecordingFolderWorker success")
+        progress.recordTiming("calllog_enrich_ms", enrichMs)
+        progress.recordTiming("room_insert_ms", insertMs)
+        progress.setPhase(ScanProgressStore.Phase.INSERT_DONE)
+        progress.setCounts(inserted = insertedCount)
+        progress.recordTiming("estimated_provider_calls", estimatedProviderCalls.toLong())
+
+        val totalElapsed = System.currentTimeMillis() - startedAt
+        Log.i(
+            TAG_SCAN,
+            "perf run=$runId totalMs=$totalElapsed files=${children.size} probes=${probes.size} " +
+                "candidates=${finalCandidates.size} inserted=$insertedCount estIpc=$estimatedProviderCalls " +
+                "timings=${progress.timingsJson()}",
+        )
+
+        // Checkpoint only after successful completion (no timeout path).
+        if (mode == MODE_INCREMENTAL) {
+            val nextCp = ScanCandidateLogic.nextCheckpoint(finalCandidates, checkpoint)
+            if (nextCp != null && !nextCp.lastSeenUri.isNullOrEmpty()) {
+                progress.advanceCheckpoint(nextCp.lastSeenTimestamp, nextCp.lastSeenUri!!)
+            }
+        } else {
+            if (markReconcileComplete) {
+                progress.markFullReconcileComplete()
+                val newest = probes.sortedWith(ScanCandidateLogic.newestFirst()).firstOrNull()
+                if (newest != null) {
+                    progress.advanceCheckpoint(newest.rankingTimestamp, newest.uri)
+                }
+            } else if (saveReconcileOffset != null) {
+                progress.setReconcileOffset(saveReconcileOffset)
+            }
+        }
+
+        progress.finish(ScanProgressStore.Result.SUCCESS)
+        mark("scan complete inserted=$insertedCount")
+        SyncStatusTracker.onScanFinished(applicationContext, success = true)
+        RecordingSyncTrigger.enqueueUpload(applicationContext)
         return Result.success()
     }
 
-    private fun isAudioFile(file: DocumentFile): Boolean {
-        val mime = file.type?.lowercase().orEmpty()
+    private fun isAudioFile(name: String?, type: String?): Boolean {
+        val mime = type?.lowercase().orEmpty()
         if (mime.startsWith("audio/")) return true
-        val name = file.name?.lowercase().orEmpty()
-        return name.endsWith(".m4a") || name.endsWith(".mp3") || name.endsWith(".aac") ||
-            name.endsWith(".wav") || name.endsWith(".3gp") || name.endsWith(".amr") || name.endsWith(".ogg")
+        val n = name?.lowercase().orEmpty()
+        return n.endsWith(".m4a") || n.endsWith(".mp3") || n.endsWith(".aac") ||
+            n.endsWith(".wav") || n.endsWith(".3gp") || n.endsWith(".amr") || n.endsWith(".ogg")
     }
 
-    // 전체 재귀 스캔 — 필요 시 수동 호출용으로 보존
-    @Suppress("unused")
-    private fun flattenFiles(root: DocumentFile): List<DocumentFile> {
-        val results = mutableListOf<DocumentFile>()
-        val stack = ArrayDeque<DocumentFile>()
-        stack.add(root)
-        while (stack.isNotEmpty()) {
-            val current = stack.removeFirst()
-            val children = try {
-                current.listFiles()
-            } catch (e: Throwable) {
-                Log.e(TAG_SCAN, "listFiles failed dir=${current.name}", e)
-                continue
-            }
-            children.forEach { child ->
-                if (child.isDirectory) stack.add(child)
-                if (child.isFile) results.add(child)
-            }
-        }
-        return results
+    companion object {
+        const val KEY_MODE = "scan_mode"
+        const val KEY_RECONCILE_OFFSET = "reconcile_offset"
+        const val MODE_INCREMENTAL = "incremental"
+        const val MODE_FULL_RECONCILE = "full_reconcile"
     }
 
     private object ScanWorkerDeps {
-        @Volatile private var db: AppDatabase? = null
+        @Volatile
+        private var db: AppDatabase? = null
 
         fun get(context: Context): AppDatabase {
             db?.let { return it }
@@ -171,7 +350,7 @@ class ScanRecordingFolderWorker(
                 db ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "stay_ops_call.db"
+                    "stay_ops_call.db",
                 )
                     .addMigrations(
                         AppDatabase.MIGRATION_1_2,

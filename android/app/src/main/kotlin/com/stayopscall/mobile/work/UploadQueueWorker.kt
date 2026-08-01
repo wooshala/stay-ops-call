@@ -80,7 +80,7 @@ class UploadQueueWorker(
 
             if (pending.isEmpty()) {
                 debugStore.put(WorkerDebugStore.KEY_UPLOAD_LAST, "완료: 업로드 대기 없음")
-                SyncStatusTracker.onSyncChainFinished(applicationContext, success = true)
+                SyncStatusTracker.onUploadFinished(applicationContext, success = true)
                 return Result.success()
             }
 
@@ -91,7 +91,7 @@ class UploadQueueWorker(
                     markFailedWithRetryPolicy(callRecordingDao, item, "UPLOAD_AGENT_TOKEN missing")
                 }
                 debugStore.put(WorkerDebugStore.KEY_UPLOAD_LAST, "오류: 업로드 토큰 미설정")
-                SyncStatusTracker.onSyncChainFinished(
+                SyncStatusTracker.onUploadFinished(
                     applicationContext,
                     success = false,
                     errorMsg = "UPLOAD_AGENT_TOKEN missing",
@@ -263,7 +263,7 @@ class UploadQueueWorker(
             Log.d("StayOpsUpload", "done: uploaded=$uploadedCount dup=$duplicateCount failed=$failedCount")
             debugStore.put(WorkerDebugStore.KEY_UPLOAD_LAST, summary)
             if (failedCount > 0) {
-                SyncStatusTracker.onSyncChainFinished(
+                SyncStatusTracker.onUploadFinished(
                     applicationContext,
                     success = false,
                     errorMsg = summary,
@@ -271,13 +271,13 @@ class UploadQueueWorker(
                 return Result.retry()
             }
             Log.d("StayOpsUpload", "UploadQueueWorker success")
-            SyncStatusTracker.onSyncChainFinished(applicationContext, success = true)
+            SyncStatusTracker.onUploadFinished(applicationContext, success = true)
             return Result.success()
         } catch (e: Exception) {
             Log.e("StayOpsUpload", "doWork failed", e)
             val ts = java.time.LocalTime.now().toString().substring(0, 5)
             debugStore.put(WorkerDebugStore.KEY_UPLOAD_LAST, "[$ts] 오류: ${e.message ?: e.javaClass.simpleName}")
-            SyncStatusTracker.onSyncChainFinished(
+            SyncStatusTracker.onUploadFinished(
                 applicationContext,
                 success = false,
                 errorMsg = e.message ?: e.javaClass.simpleName,

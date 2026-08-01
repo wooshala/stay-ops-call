@@ -3,27 +3,18 @@ package com.stayopscall.mobile.work
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.stayopscall.mobile.core.sync.RecordingSyncTrigger
 import java.util.concurrent.TimeUnit
 
 class WorkOrchestrator(private val context: Context) {
+    /** Independent scan + upload (no chain). */
     fun enqueueScanUploadSyncChain() {
-        val scan = OneTimeWorkRequestBuilder<ScanRecordingFolderWorker>().build()
-        val upload = OneTimeWorkRequestBuilder<UploadQueueWorker>().build()
-        val sync = OneTimeWorkRequestBuilder<StatusSyncWorker>().build()
-        WorkManager.getInstance(context)
-            .beginUniqueWork(
-                "scan-upload-sync",
-                ExistingWorkPolicy.KEEP,
-                scan,
-            )
-            .then(upload)
-            .then(sync)
-            .enqueue()
+        RecordingSyncTrigger.recoverStaleScanIfNeeded(context)
+        RecordingSyncTrigger.enqueueScan(context, forceFullReconcile = false)
+        RecordingSyncTrigger.enqueueUpload(context)
     }
 
     fun schedulePeriodicSync() {
@@ -31,13 +22,13 @@ class WorkOrchestrator(private val context: Context) {
             .setConstraints(
                 Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
+                    .build(),
             )
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             "status-sync",
             ExistingPeriodicWorkPolicy.KEEP,
-            periodic
+            periodic,
         )
     }
 }
