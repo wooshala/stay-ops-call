@@ -127,6 +127,25 @@ class ScanProgressStore(context: Context) {
         prefs.edit().putInt(KEY_RECONCILE_OFFSET, offset.coerceAtLeast(0)).commit()
     }
 
+    fun reconcileCursor(): ScanCandidateLogic.Checkpoint? {
+        if (!prefs.contains(KEY_RECONCILE_CURSOR_TS)) return null
+        return ScanCandidateLogic.Checkpoint(
+            lastSeenTimestamp = prefs.getLong(KEY_RECONCILE_CURSOR_TS, 0L),
+            lastSeenUri = prefs.getString(KEY_RECONCILE_CURSOR_URI, null),
+        )
+    }
+
+    fun setReconcileCursor(cursor: ScanCandidateLogic.Checkpoint?) {
+        val e = prefs.edit()
+        if (cursor == null) {
+            e.remove(KEY_RECONCILE_CURSOR_TS).remove(KEY_RECONCILE_CURSOR_URI)
+        } else {
+            e.putLong(KEY_RECONCILE_CURSOR_TS, cursor.lastSeenTimestamp)
+                .putString(KEY_RECONCILE_CURSOR_URI, cursor.lastSeenUri)
+        }
+        e.commit()
+    }
+
     /**
      * Advance incremental checkpoint only after a fully successful scan that finished inserts.
      */
@@ -147,6 +166,8 @@ class ScanProgressStore(context: Context) {
         prefs.edit()
             .putLong(KEY_LAST_FULL_RECONCILE_AT, nowMs)
             .putInt(KEY_RECONCILE_OFFSET, 0)
+            .remove(KEY_RECONCILE_CURSOR_TS)
+            .remove(KEY_RECONCILE_CURSOR_URI)
             .commit()
         Log.d(TAG, "full_reconcile_complete")
     }
@@ -203,5 +224,7 @@ class ScanProgressStore(context: Context) {
         private const val KEY_LAST_SEEN_URI = "last_seen_uri"
         private const val KEY_LAST_FULL_RECONCILE_AT = "last_full_reconcile_at"
         private const val KEY_RECONCILE_OFFSET = "reconcile_offset"
+        private const val KEY_RECONCILE_CURSOR_TS = "reconcile_cursor_ts"
+        private const val KEY_RECONCILE_CURSOR_URI = "reconcile_cursor_uri"
     }
 }

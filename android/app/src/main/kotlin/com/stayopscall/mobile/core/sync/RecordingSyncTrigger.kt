@@ -26,7 +26,8 @@ enum class SyncSource {
  * Independent Scan / Upload enqueue (no WorkManager `.then()` chain).
  *
  * Policy: never blindly REPLACE a healthy running scan. Stale scans are cancelled
- * via [recoverStaleScanIfNeeded] before enqueue. Upload always uses KEEP.
+ * via [recoverStaleScanIfNeeded] and the follow-up enqueue uses REPLACE because cancel
+ * completion is asynchronous (KEEP would no-op while the cancelled work still looks active).
  */
 object RecordingSyncTrigger {
     private const val TAG = "StayOpsSync"
@@ -75,30 +76,34 @@ object RecordingSyncTrigger {
         }
 
         val progress = ScanProgressStore(appContext)
-        recoverStaleScanIfNeeded(appContext, progress)
+        val staleRecovered = recoverStaleScanIfNeeded(appContext, progress)
         // Drop legacy Scan.then(Upload) unique work if still present after upgrade.
         WorkManager.getInstance(appContext).cancelUniqueWork(UNIQUE_WORK_NAME)
 
         val forceFull = source == SyncSource.MANUAL || source == SyncSource.SETTINGS
-        enqueueScan(appContext, forceFullReconcile = forceFull)
+        enqueueScan(appContext, forceFullReconcile = forceFull, staleRecovered = staleRecovered)
         enqueueUpload(appContext)
 
-        Log.d(TAG, "scan+upload enqueued independently source=$source forceFull=$forceFull")
+        Log.d(TAG, "scan+upload enqueued independently source=$source forceFull=$forceFull stale=$staleRecovered")
     }
 
     /**
-     * @param forceFullReconcile manual/settings diagnostic path — full reconcile from offset 0
-     * when no healthy scan is already running.
+     * @param forceFullReconcile manual/settings diagnostic path — full reconcile from start
+     * when no healthy scan is already running (unless [staleRecovered] forces REPLACE).
+     * @param staleRecovered when true, use REPLACE so a new scan is actually scheduled after cancel.
      */
     fun enqueueScan(
         context: Context,
         forceFullReconcile: Boolean = false,
+        staleRecovered: Boolean = false,
     ) {
         val appContext = context.applicationContext
         val progress = ScanProgressStore(appContext)
+        val active = hasActiveWork(appContext, UNIQUE_SCAN_WORK)
+        val policy = ScanEnqueuePolicy.scanPolicy(staleRecovered, active)
 
-        if (hasActiveWork(appContext, UNIQUE_SCAN_WORK)) {
-            Log.d(TAG, "scan enqueue skipped: active work present (KEEP)")
+        if (policy == ScanEnqueuePolicy.UniquePolicy.KEEP && active) {
+            Log.d(TAG, "scan enqueue skipped: healthy active work present (KEEP)")
             WorkManager.getInstance(appContext)
                 .enqueueUniqueWork(
                     UNIQUE_SCAN_WORK,
@@ -108,34 +113,34 @@ object RecordingSyncTrigger {
             return
         }
 
-        val mode = when {
-            forceFullReconcile -> {
-                progress.setReconcileOffset(0)
-                ScanRecordingFolderWorker.MODE_FULL_RECONCILE
-            }
-            progress.needsFullReconcile() -> ScanRecordingFolderWorker.MODE_FULL_RECONCILE
-            else -> ScanRecordingFolderWorker.MODE_INCREMENTAL
+        if (forceFullReconcile) {
+            progress.setReconcileCursor(null)
+            progress.setReconcileOffset(0)
         }
 
-        val offset = if (mode == ScanRecordingFolderWorker.MODE_FULL_RECONCILE) {
-            progress.reconcileOffset()
-        } else {
-            0
+        val mode = when {
+            forceFullReconcile -> ScanRecordingFolderWorker.MODE_FULL_RECONCILE
+            progress.needsFullReconcile() -> ScanRecordingFolderWorker.MODE_FULL_RECONCILE
+            else -> ScanRecordingFolderWorker.MODE_INCREMENTAL
         }
 
         val request = OneTimeWorkRequestBuilder<ScanRecordingFolderWorker>()
             .setInputData(
                 workDataOf(
                     ScanRecordingFolderWorker.KEY_MODE to mode,
-                    ScanRecordingFolderWorker.KEY_RECONCILE_OFFSET to offset,
                 ),
             )
             .build()
 
-        WorkManager.getInstance(appContext)
-            .enqueueUniqueWork(UNIQUE_SCAN_WORK, ExistingWorkPolicy.KEEP, request)
+        val wmPolicy = when (policy) {
+            ScanEnqueuePolicy.UniquePolicy.REPLACE -> ExistingWorkPolicy.REPLACE
+            ScanEnqueuePolicy.UniquePolicy.KEEP -> ExistingWorkPolicy.KEEP
+        }
 
-        Log.d(TAG, "scan enqueued mode=$mode offset=$offset policy=KEEP")
+        WorkManager.getInstance(appContext)
+            .enqueueUniqueWork(UNIQUE_SCAN_WORK, wmPolicy, request)
+
+        Log.d(TAG, "scan enqueued mode=$mode policy=$wmPolicy staleRecovered=$staleRecovered")
     }
 
     fun enqueueUpload(context: Context) {
@@ -154,16 +159,19 @@ object RecordingSyncTrigger {
         Log.d(TAG, "upload enqueued policy=KEEP")
     }
 
+    /** @return true if a stale run was cancelled. */
     fun recoverStaleScanIfNeeded(
         context: Context,
         progress: ScanProgressStore = ScanProgressStore(context),
-    ) {
-        if (!progress.isStale()) return
+    ): Boolean {
+        if (!progress.isStale()) return false
         val started = progress.startedAtOrNull()
         val age = started?.let { System.currentTimeMillis() - it }
         Log.w(TAG, "stale_scan_detected ageMs=$age ${progress.snapshotLine()}")
         progress.markStaleRecovered("watchdog")
         WorkManager.getInstance(context.applicationContext).cancelUniqueWork(UNIQUE_SCAN_WORK)
+        // Note: cancel is async — callers must enqueueScan(staleRecovered=true) → REPLACE.
+        return true
     }
 
     fun hasActiveWork(context: Context, uniqueName: String): Boolean {

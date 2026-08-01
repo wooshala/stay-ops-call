@@ -57,6 +57,10 @@ object ScanCandidateLogic {
         return filtered.sortedWith(newestFirst()).take(topN)
     }
 
+    /**
+     * @deprecated Prefer [filterReconcileBatchByCursor]. Offset pagination drifts when the
+     * newest-first list shrinks (deletes) and can skip unprocessed rows.
+     */
     fun filterReconcileBatch(
         probes: List<FileProbe>,
         offset: Int,
@@ -66,6 +70,55 @@ object ScanCandidateLogic {
         val slice = sorted.drop(offset.coerceAtLeast(0)).take(batchSize)
         val hasMore = offset.coerceAtLeast(0) + slice.size < sorted.size
         return slice to hasMore
+    }
+
+    /**
+     * Full reconcile pagination by cursor (newest → older).
+     * [cursor] is the oldest item of the previous batch (exclusive resume point).
+     * New files inserted at the newest end are skipped for this reconcile pass (caught by
+     * incremental later) but never push unprocessed older files out of the remaining window.
+     */
+    data class ReconcilePage(
+        val batch: List<FileProbe>,
+        val hasMore: Boolean,
+        /** Oldest of [batch]; store as next cursor when [hasMore]. Null when done. */
+        val nextCursor: Checkpoint?,
+    )
+
+    fun filterReconcileBatchByCursor(
+        probes: List<FileProbe>,
+        cursor: Checkpoint?,
+        batchSize: Int = RECONCILE_BATCH,
+    ): ReconcilePage {
+        val sorted = probes.sortedWith(newestFirst())
+        val remaining = if (cursor == null) {
+            sorted
+        } else {
+            sorted.filter { isStrictlyOlderThan(it, cursor) }
+        }
+        val batch = remaining.take(batchSize)
+        val hasMore = remaining.size > batch.size
+        val nextCursor = if (batch.isEmpty()) {
+            null
+        } else if (hasMore) {
+            val edge = batch.last()
+            Checkpoint(edge.rankingTimestamp, edge.uri)
+        } else {
+            null
+        }
+        return ReconcilePage(batch, hasMore, nextCursor)
+    }
+
+    /** True if [probe] should still be visited after processing up through [cursor] (newest-first). */
+    fun isStrictlyOlderThan(probe: FileProbe, cursor: Checkpoint): Boolean {
+        return when {
+            probe.rankingTimestamp < cursor.lastSeenTimestamp -> true
+            probe.rankingTimestamp > cursor.lastSeenTimestamp -> false
+            else -> {
+                val cursorUri = cursor.lastSeenUri.orEmpty()
+                probe.uri < cursorUri
+            }
+        }
     }
 
     /**

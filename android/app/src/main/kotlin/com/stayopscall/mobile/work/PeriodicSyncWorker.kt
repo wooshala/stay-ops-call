@@ -36,10 +36,14 @@ class PeriodicSyncWorker(
         SyncStatusTracker.markSyncStarted(WorkerDebugStore(applicationContext))
 
         val progress = ScanProgressStore(applicationContext)
-        RecordingSyncTrigger.recoverStaleScanIfNeeded(applicationContext, progress)
+        val staleRecovered = RecordingSyncTrigger.recoverStaleScanIfNeeded(applicationContext, progress)
 
         // Independent legs — upload is never BLOCKED on scan.
-        RecordingSyncTrigger.enqueueScan(applicationContext, forceFullReconcile = false)
+        RecordingSyncTrigger.enqueueScan(
+            applicationContext,
+            forceFullReconcile = false,
+            staleRecovered = staleRecovered,
+        )
         RecordingSyncTrigger.enqueueUpload(applicationContext)
 
         Log.d("StayOpsUpload", "periodic scan+upload enqueued independently")

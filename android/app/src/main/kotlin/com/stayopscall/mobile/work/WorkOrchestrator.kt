@@ -12,8 +12,8 @@ import java.util.concurrent.TimeUnit
 class WorkOrchestrator(private val context: Context) {
     /** Independent scan + upload (no chain). */
     fun enqueueScanUploadSyncChain() {
-        RecordingSyncTrigger.recoverStaleScanIfNeeded(context)
-        RecordingSyncTrigger.enqueueScan(context, forceFullReconcile = false)
+        val stale = RecordingSyncTrigger.recoverStaleScanIfNeeded(context)
+        RecordingSyncTrigger.enqueueScan(context, forceFullReconcile = false, staleRecovered = stale)
         RecordingSyncTrigger.enqueueUpload(context)
     }
 

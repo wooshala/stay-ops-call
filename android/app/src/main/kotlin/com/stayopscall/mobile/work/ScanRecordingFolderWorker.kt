@@ -12,6 +12,7 @@ import com.stayopscall.mobile.core.storage.RecordingFolderStore
 import com.stayopscall.mobile.core.storage.WorkerDebugStore
 import com.stayopscall.mobile.core.sync.RecordingSyncTrigger
 import com.stayopscall.mobile.core.sync.ScanCandidateLogic
+import com.stayopscall.mobile.core.sync.ScanEnqueuePolicy
 import com.stayopscall.mobile.core.sync.ScanProgressStore
 import com.stayopscall.mobile.core.sync.SyncStatusTracker
 import com.stayopscall.mobile.data.local.AppDatabase
@@ -30,12 +31,11 @@ class ScanRecordingFolderWorker(
         val debugStore = WorkerDebugStore(applicationContext)
         val progress = ScanProgressStore(applicationContext)
         val mode = inputData.getString(KEY_MODE) ?: MODE_INCREMENTAL
-        val startOffset = inputData.getInt(KEY_RECONCILE_OFFSET, 0)
         val runId = progress.beginRun(mode)
         val startedAt = System.currentTimeMillis()
 
         return try {
-            runScan(debugStore, progress, mode, startOffset, startedAt, runId)
+            runScan(debugStore, progress, mode, startedAt, runId)
         } catch (e: Throwable) {
             Log.e(TAG_SCAN, "doWork exception run=$runId", e)
             debugStore.put(
@@ -57,7 +57,6 @@ class ScanRecordingFolderWorker(
         debugStore: WorkerDebugStore,
         progress: ScanProgressStore,
         mode: String,
-        startOffset: Int,
         startedAt: Long,
         runId: String,
     ): Result {
@@ -86,7 +85,7 @@ class ScanRecordingFolderWorker(
             return null
         }
 
-        mark("scan start mode=$mode offset=$startOffset")
+        mark("scan start mode=$mode")
 
         val folderStore = RecordingFolderStore(applicationContext)
         val treeUri = folderStore.getFolderUri() ?: run {
@@ -185,21 +184,23 @@ class ScanRecordingFolderWorker(
         }
 
         val finalCandidates: List<ScanCandidateLogic.FileProbe>
-        var saveReconcileOffset: Int? = null
+        var nextReconcileCursor: ScanCandidateLogic.Checkpoint? = null
         var markReconcileComplete = false
 
         if (mode == MODE_FULL_RECONCILE) {
-            val (batch, more) = ScanCandidateLogic.filterReconcileBatch(probes, startOffset)
-            finalCandidates = batch
-            if (more) {
-                saveReconcileOffset = startOffset + batch.size
+            val page = ScanCandidateLogic.filterReconcileBatchByCursor(
+                probes,
+                cursor = progress.reconcileCursor(),
+            )
+            finalCandidates = page.batch
+            if (page.hasMore) {
+                nextReconcileCursor = page.nextCursor
             } else {
-                saveReconcileOffset = 0
+                nextReconcileCursor = null
                 markReconcileComplete = true
             }
         } else {
             finalCandidates = ScanCandidateLogic.filterIncremental(probes, checkpoint)
-            saveReconcileOffset = null
         }
 
         progress.recordTiming("sort_filter_ms", System.currentTimeMillis() - sortStart)
@@ -210,10 +211,7 @@ class ScanRecordingFolderWorker(
                 "estIpc=$estimatedProviderCalls",
         )
 
-        checkTimeout("after_filter")?.let {
-            saveReconcileOffset?.let { off -> progress.setReconcileOffset(off) }
-            return it
-        }
+        checkTimeout("after_filter")?.let { return it }
 
         if (finalCandidates.isEmpty()) {
             if (mode == MODE_FULL_RECONCILE && markReconcileComplete) {
@@ -238,21 +236,18 @@ class ScanRecordingFolderWorker(
         val newProbes = finalCandidates.filter { it.uri !in existingUris }
         mark("room compare new=${newProbes.size} existing=${finalCandidates.size - newProbes.size}")
 
-        checkTimeout("after_room")?.let {
-            saveReconcileOffset?.let { off -> progress.setReconcileOffset(off) }
-            return it
-        }
+        checkTimeout("after_room")?.let { return it }
 
         val now = System.currentTimeMillis()
         var insertedCount = 0
         var enrichMs = 0L
         var insertMs = 0L
+        var abortedDuringInsert = false
 
         for (probe in newProbes) {
-            checkTimeout("during_insert")?.let {
-                // Partial inserts kept; checkpoint not advanced
-                saveReconcileOffset?.let { off -> progress.setReconcileOffset(off) }
-                return it
+            if (ScanCandidateLogic.isPastSoftTimeout(startedAt, System.currentTimeMillis())) {
+                // Checkpoint must not advance.
+                return timedOut("during_insert")
             }
             val file = docByUri[probe.uri] ?: continue
             try {
@@ -283,6 +278,8 @@ class ScanRecordingFolderWorker(
                 if (rowId != -1L) insertedCount++
             } catch (e: Exception) {
                 Log.e(TAG_SCAN, "insert failed run=$runId", e)
+                // Per-file failure: continue others; do not advance checkpoint for the run.
+                abortedDuringInsert = true
             }
         }
 
@@ -300,22 +297,36 @@ class ScanRecordingFolderWorker(
                 "timings=${progress.timingsJson()}",
         )
 
-        // Checkpoint only after successful completion (no timeout path).
-        if (mode == MODE_INCREMENTAL) {
+        val runOk = ScanEnqueuePolicy.mayAdvanceCheckpoint(
+            runSucceeded = !abortedDuringInsert,
+            timedOut = false,
+            abortedDuringInsert = abortedDuringInsert,
+        )
+
+        // Checkpoint only after successful completion with no insert-path abort.
+        if (runOk && mode == MODE_INCREMENTAL) {
             val nextCp = ScanCandidateLogic.nextCheckpoint(finalCandidates, checkpoint)
             if (nextCp != null && !nextCp.lastSeenUri.isNullOrEmpty()) {
                 progress.advanceCheckpoint(nextCp.lastSeenTimestamp, nextCp.lastSeenUri!!)
             }
-        } else {
+        } else if (runOk && mode == MODE_FULL_RECONCILE) {
             if (markReconcileComplete) {
                 progress.markFullReconcileComplete()
                 val newest = probes.sortedWith(ScanCandidateLogic.newestFirst()).firstOrNull()
                 if (newest != null) {
                     progress.advanceCheckpoint(newest.rankingTimestamp, newest.uri)
                 }
-            } else if (saveReconcileOffset != null) {
-                progress.setReconcileOffset(saveReconcileOffset)
+            } else if (nextReconcileCursor != null) {
+                progress.setReconcileCursor(nextReconcileCursor)
             }
+        }
+
+        if (abortedDuringInsert) {
+            progress.finish(ScanProgressStore.Result.FAILED)
+            mark("scan failed partial inserts=$insertedCount (checkpoint unchanged)")
+            SyncStatusTracker.onScanFinished(applicationContext, success = false, errorMsg = "insert_partial_fail")
+            RecordingSyncTrigger.enqueueUpload(applicationContext)
+            return Result.failure()
         }
 
         progress.finish(ScanProgressStore.Result.SUCCESS)
@@ -335,7 +346,6 @@ class ScanRecordingFolderWorker(
 
     companion object {
         const val KEY_MODE = "scan_mode"
-        const val KEY_RECONCILE_OFFSET = "reconcile_offset"
         const val MODE_INCREMENTAL = "incremental"
         const val MODE_FULL_RECONCILE = "full_reconcile"
     }
