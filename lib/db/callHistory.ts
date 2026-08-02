@@ -2,6 +2,7 @@
  * 통화내역(30일) 원장 조회 — public.calls 를 created_at 범위로 직접 조회.
  * 목록 정렬은 실제 통화 시각(started_at) 우선. 목록은 transcript/recording/error 원문 제외.
  */
+import { buildCallHistorySearchOrFilter } from "@/lib/api/callHistorySearch";
 import { getServiceSupabase } from "@/lib/supabase/server";
 import { CALL_HISTORY_ORDER } from "@/lib/db/callHistorySort";
 
@@ -99,27 +100,47 @@ export async function listCallHistory(args: {
   toIso: string;
   page: number;
   pageSize: number;
+  /** trim 된 검색어. null/undefined 이면 검색 필터 없음 */
+  q?: string | null;
+  digits?: string | null;
+  /** 고객명 검색으로 매칭된 전화번호(최대 100). stay-ops는 customers 테이블을 모름 */
+  matchedPhones?: string[];
 }): Promise<{
   items: CallHistoryListItem[];
   total: number;
   page: number;
   pageSize: number;
   hasNext: boolean;
+  q: string | null;
 }> {
-  const { fromIso, toIso, page, pageSize } = args;
+  const { fromIso, toIso, page, pageSize, q = null, digits = null, matchedPhones = [] } =
+    args;
   const supabase = getServiceSupabase();
 
   const fromIdx = (page - 1) * pageSize;
   const toIdx = fromIdx + pageSize - 1;
 
   // Filter: created_at window (upload/ingest time).
-  // Order: started_at DESC NULLS LAST, created_at DESC, id DESC (stable pagination).
-  // PostgREST: nullsFirst:false with ascending:false ⇒ NULLS LAST.
-  const { data, error, count } = await supabase
+  // Optional search: ILIKE on phone/intent/summary/transcript (+ matchedPhones).
+  // LIST_COLUMNS must never include transcript_text (search-only in WHERE).
+  // Order: started_at DESC NULLS LAST, created_at DESC, id DESC.
+  let query = supabase
     .from("calls")
     .select(LIST_COLUMNS, { count: "exact" })
     .gte("created_at", fromIso)
-    .lt("created_at", toIso)
+    .lt("created_at", toIso);
+
+  if (q) {
+    query = query.or(
+      buildCallHistorySearchOrFilter({
+        q,
+        digits,
+        matchedPhones,
+      }),
+    );
+  }
+
+  const { data, error, count } = await query
     .order(CALL_HISTORY_ORDER[0].column, CALL_HISTORY_ORDER[0].options)
     .order(CALL_HISTORY_ORDER[1].column, CALL_HISTORY_ORDER[1].options)
     .order(CALL_HISTORY_ORDER[2].column, CALL_HISTORY_ORDER[2].options)
@@ -135,6 +156,7 @@ export async function listCallHistory(args: {
     page,
     pageSize,
     hasNext: fromIdx + items.length < total,
+    q,
   };
 }
 
