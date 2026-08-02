@@ -55,13 +55,19 @@ export async function GET(request: Request) {
       ok: true,
       from: fromIso,
       to: toIso,
+      query: result.q,
       ...result,
     });
   } catch (e) {
     if (e instanceof CallHistoryQueryValidationError) {
-      return Response.json({ ok: false, error: e.message }, { status: 400 });
+      // Do not echo the raw search string.
+      return Response.json(
+        { ok: false, error: e.code, message: e.message },
+        { status: 400 },
+      );
     }
     const { code, message } = describeDbError(e);
+    // Never log search query text — only has_q boolean.
     console.error("[CALL_HISTORY] list failed", {
       route: "/api/calls/history",
       from: params?.fromIso ?? null,
