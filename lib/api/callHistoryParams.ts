@@ -6,7 +6,14 @@
  *  - from 기본값 = to - 30일
  *  - 최대 조회 기간 = 90일 (초과 시 from 을 to-90일로 절단)
  *  - page ≥ 1, pageSize 1..100 (기본 50)
+ *  - q optional (1..100). 빈 문자열 → 필터 없음. 101+ → ValidationError
  */
+
+import {
+  parseMatchedPhones,
+  resolveSearchQuery,
+  type ResolvedSearchQuery,
+} from "@/lib/api/callHistorySearch";
 
 export const DEFAULT_RANGE_DAYS = 30;
 export const MAX_RANGE_DAYS = 90;
@@ -20,6 +27,8 @@ export type CallHistoryParams = {
   toIso: string;
   page: number;
   pageSize: number;
+  search: ResolvedSearchQuery;
+  matchedPhones: string[];
 };
 
 function parseIntOr(raw: string | null, fallback: number): number {
@@ -55,10 +64,15 @@ export function resolveCallHistoryParams(
     Math.max(1, parseIntOr(query.get("pageSize"), DEFAULT_PAGE_SIZE)),
   );
 
+  const search = resolveSearchQuery(query.get("q"));
+  const matchedPhones = parseMatchedPhones(query.get("matchedPhones"));
+
   return {
     fromIso: new Date(fromMs).toISOString(),
     toIso: new Date(toMs).toISOString(),
     page,
     pageSize,
+    search,
+    matchedPhones,
   };
 }

@@ -2,8 +2,10 @@
  * GET /api/calls/history — 최근 통화 목록(30일 기본, 최대 90일).
  * 인증: Bearer INTERNAL_API_TOKEN (미설정 → 503, 불일치 → 401). public 금지.
  * 목록은 transcript/recording/error 원문 미포함.
+ * q optional: 서버 검색(phone/intent/summary/transcript + matchedPhones).
  */
 import { getBearerTokenFromRequest } from "@/lib/auth/internalApi";
+import { CallHistoryQueryValidationError } from "@/lib/api/callHistorySearch";
 import { resolveCallHistoryParams } from "@/lib/api/callHistoryParams";
 import {
   describeDbError,
@@ -34,30 +36,45 @@ export async function GET(request: Request) {
   if (unauthorized) return unauthorized;
 
   const startedMs = Date.now();
-  // catch 에서도 참조하므로 try 밖에서 선언(파싱 실패 시 null 로 남는다).
   let params: ReturnType<typeof resolveCallHistoryParams> | null = null;
 
   try {
     const url = new URL(request.url);
     params = resolveCallHistoryParams(url.searchParams);
-    const { fromIso, toIso, page, pageSize } = params;
-    const result = await listCallHistory({ fromIso, toIso, page, pageSize });
+    const { fromIso, toIso, page, pageSize, search, matchedPhones } = params;
+    const result = await listCallHistory({
+      fromIso,
+      toIso,
+      page,
+      pageSize,
+      q: search.q,
+      digits: search.digits,
+      matchedPhones,
+    });
     return Response.json({
       ok: true,
       from: fromIso,
       to: toIso,
+      query: result.q,
       ...result,
     });
   } catch (e) {
-    // 진단 로그: 조회 조건 + DB 에러 코드만. 전화번호/summary/transcript/
-    // recording_path/secret 은 포함하지 않는다.
+    if (e instanceof CallHistoryQueryValidationError) {
+      // Do not echo the raw search string.
+      return Response.json(
+        { ok: false, error: e.code, message: e.message },
+        { status: 400 },
+      );
+    }
     const { code, message } = describeDbError(e);
+    // Never log search query text — only has_q boolean.
     console.error("[CALL_HISTORY] list failed", {
       route: "/api/calls/history",
       from: params?.fromIso ?? null,
       to: params?.toIso ?? null,
       page: params?.page ?? null,
       pageSize: params?.pageSize ?? null,
+      has_q: Boolean(params?.search.q),
       cols: LIST_COLUMN_COUNT,
       code,
       message,
