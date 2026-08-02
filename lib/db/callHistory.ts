@@ -1,8 +1,9 @@
 /**
  * 통화내역(30일) 원장 조회 — public.calls 를 created_at 범위로 직접 조회.
- * 목록은 transcript/recording/error 원문을 제외한 whitelist 만 반환.
+ * 목록 정렬은 실제 통화 시각(started_at) 우선. 목록은 transcript/recording/error 원문 제외.
  */
 import { getServiceSupabase } from "@/lib/supabase/server";
+import { CALL_HISTORY_ORDER } from "@/lib/db/callHistorySort";
 
 export type CallHistoryListItem = {
   id: string;
@@ -111,12 +112,17 @@ export async function listCallHistory(args: {
   const fromIdx = (page - 1) * pageSize;
   const toIdx = fromIdx + pageSize - 1;
 
+  // Filter: created_at window (upload/ingest time).
+  // Order: started_at DESC NULLS LAST, created_at DESC, id DESC (stable pagination).
+  // PostgREST: nullsFirst:false with ascending:false ⇒ NULLS LAST.
   const { data, error, count } = await supabase
     .from("calls")
     .select(LIST_COLUMNS, { count: "exact" })
     .gte("created_at", fromIso)
     .lt("created_at", toIso)
-    .order("created_at", { ascending: false })
+    .order(CALL_HISTORY_ORDER[0].column, CALL_HISTORY_ORDER[0].options)
+    .order(CALL_HISTORY_ORDER[1].column, CALL_HISTORY_ORDER[1].options)
+    .order(CALL_HISTORY_ORDER[2].column, CALL_HISTORY_ORDER[2].options)
     .range(fromIdx, toIdx);
 
   if (error) throw error;

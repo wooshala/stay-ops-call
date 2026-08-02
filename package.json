@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:call-history-sort": "node --import tsx --test lib/db/callHistorySort.test.ts",
     "backfill:reservation-drafts": "node --env-file=.env.local --import tsx scripts/backfillReservationDrafts.ts",
     "verify:uncertain-state": "tsx scripts/verifyUncertainTerminalState.ts"
   },
