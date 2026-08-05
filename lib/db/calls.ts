@@ -1149,3 +1149,60 @@ export async function getStuckAnalysisQueueStats(
       : null,
   };
 }
+
+/** uncertain 사유별 집계 (건수만, 개별 통화 정보 없음) */
+export type UncertainReasonStats = {
+  /** 집계 창(일) */
+  windowDays: number;
+  /** 창 안에서 uncertain 으로 종결된 총 건수 */
+  total: number;
+  /** 사유 코드별 건수. 한 통화가 사유를 여러 개 가질 수 있어 합계 >= total */
+  byReason: Record<string, number>;
+};
+
+/**
+ * 최근 N일간 `analysis_error_code='transcript_uncertain'` 으로 종결된 통화를
+ * 사유(`secondary_tags` 의 `warn_*`)별로 집계한다.
+ *
+ * 판정 임계치를 조정했을 때 효과를 즉시 확인하기 위한 KPI —
+ * 예: repetitive 완화 후 `repetitive_transcript` 건수가 줄어드는지.
+ *
+ * transcript·전화번호·summary 는 조회하지 않는다.
+ *
+ * 주의: 이 집계는 **종결된 건만** 센다. QUEUE-002 이전에 쌓인 `queued` 적체는
+ * `secondary_tags` 가 빈 배열이라 사유를 알 수 없다(→ CALL-ANALYSIS-BACKFILL-001).
+ */
+export async function getUncertainReasonStats(
+  windowDays = 7,
+): Promise<UncertainReasonStats> {
+  const supabase = getServiceSupabase();
+  const since = new Date(Date.now() - windowDays * 86_400_000).toISOString();
+
+  const { data, error } = await supabase
+    .from("calls")
+    .select("secondary_tags")
+    .eq("analysis_error_code", "transcript_uncertain")
+    .gte("created_at", since)
+    .limit(2000);
+
+  if (error) {
+    console.error("[calls] getUncertainReasonStats error", error);
+    throw error;
+  }
+
+  const rows = (data ?? []) as Array<{ secondary_tags: unknown }>;
+  const byReason: Record<string, number> = {};
+  for (const row of rows) {
+    const tags = Array.isArray(row.secondary_tags) ? row.secondary_tags : [];
+    let matched = false;
+    for (const tag of tags) {
+      if (typeof tag !== "string" || !tag.startsWith("warn_")) continue;
+      const reason = tag.slice("warn_".length);
+      byReason[reason] = (byReason[reason] ?? 0) + 1;
+      matched = true;
+    }
+    if (!matched) byReason.unknown = (byReason.unknown ?? 0) + 1;
+  }
+
+  return { windowDays, total: rows.length, byReason };
+}
