@@ -6,6 +6,8 @@ import androidx.work.Configuration
 import com.stayopscall.mobile.core.calllog.CallLogCallTaskMonitor
 import com.stayopscall.mobile.core.phone.IncomingCallListener
 import com.stayopscall.mobile.core.relay.CallTaskConfigLogger
+import com.stayopscall.mobile.work.CallLogRelayWorker
+import com.stayopscall.mobile.work.CollectorHeartbeatWorker
 import com.stayopscall.mobile.work.PeriodicSyncWorker
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -24,7 +26,10 @@ class StayOpsCallApp : Application(), Configuration.Provider {
         super.onCreate()
         CallTaskConfigLogger.logOnceAtStartup()
         PeriodicSyncWorker.schedule(this)
+        CollectorHeartbeatWorker.schedulePeriodic(this)
+        CollectorHeartbeatWorker.enqueueNow(this)
         CallLogCallTaskMonitor.start(this)
-        IncomingCallListener.start(this)  // READ_PHONE_STATE 없으면 no-op
+        IncomingCallListener.start(this)
+        CallLogRelayWorker.enqueue(this)
     }
 }

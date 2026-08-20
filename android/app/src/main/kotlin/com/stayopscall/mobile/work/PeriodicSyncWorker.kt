@@ -23,9 +23,15 @@ class PeriodicSyncWorker(
     override fun doWork(): Result {
         Log.d("StayOpsScan", "periodic sync tick")
 
+        com.stayopscall.mobile.core.calllog.CallLogOutboxIngestor.scanAndEnqueue(
+            applicationContext,
+            trigger = "periodic",
+        )
+        CallLogRelayWorker.enqueue(applicationContext)
+
         val folderStore = RecordingFolderStore(applicationContext)
         if (folderStore.getFolderUri() == null) {
-            Log.d("StayOpsScan", "periodic sync: no folder configured, skip")
+            Log.d("StayOpsScan", "periodic sync: no folder configured, recording legs skipped")
             return Result.success()
         }
 

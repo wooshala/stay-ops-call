@@ -10,6 +10,7 @@ import com.stayopscall.mobile.core.calllog.CallLogCallTaskMonitor
 import com.stayopscall.mobile.core.sync.RecordingSyncTrigger
 import com.stayopscall.mobile.ui.navigation.StayOpsNavHost
 import com.stayopscall.mobile.ui.theme.StayOpsCallTheme
+import com.stayopscall.mobile.work.CollectorHeartbeatWorker
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -30,5 +31,6 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         CallLogCallTaskMonitor.scanAndRelay(applicationContext)
         RecordingSyncTrigger.triggerForegroundSync(applicationContext)
+        CollectorHeartbeatWorker.enqueueNow(applicationContext)
     }
 }

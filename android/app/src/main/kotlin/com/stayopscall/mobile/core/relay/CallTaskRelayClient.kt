@@ -171,40 +171,54 @@ object CallTaskRelayClient {
 
     // ── ended relay ────────────────────────────────────────────────────────────
 
-    fun relayEndedCall(context: android.content.Context, event: EndedCallEvent) {
-        val store = CallTaskRelayStore(context)
-        if (store.wasRelayed(event.callLogId)) return
-
-        if (!isConfigured()) {
-            Log.w(TAG, "[CALL_TASK_RELAY_FAIL] callLogId=${event.callLogId} type=Config message=not configured")
-            return
-        }
-
-        // incoming sourceEventId 연결 — phone 기반 먼저, 없으면 UNKNOWN(phone=null) 시간 기반 fallback
+    /**
+     * Resolve sticky source_event_id for a newly discovered CallLog row.
+     * Prefers in-memory incoming link; otherwise durable call-log:{id}.
+     */
+    fun resolveSourceEventId(event: EndedCallEvent): String {
         val linkedId = IncomingCallState.consumeForPhone(event.normalizedPhone)
             ?: IncomingCallState.consumeUnknownIfRecent(event.startedAtMs)
-        val sourceEventId = linkedId ?: "call-log:${event.callLogId}"
+        return linkedId ?: "call-log:${event.callLogId}"
+    }
+
+    /**
+     * Durable outbox send. ACK only on HTTP 2xx + ok:true (including skipped duplicate).
+     */
+    fun relayEndedOutbox(
+        sourceEventId: String,
+        phone: String,
+        contactName: String?,
+        startedAtMs: Long,
+        endedAtMs: Long,
+        durationSeconds: Int,
+        direction: String,
+        callLogId: Long,
+    ): CallTaskRelayResult {
+        if (!isConfigured()) {
+            Log.w(TAG, "[CALL_TASK_RELAY_FAIL] callLogId=$callLogId type=Config message=not configured")
+            return CallTaskRelayResult.Retryable("not_configured")
+        }
 
         val payload = JSONObject().apply {
             put("event_type", "ended")
-            put("phone", event.normalizedPhone)
-            if (event.contactName.isNullOrBlank()) {
+            put("phone", phone)
+            if (contactName.isNullOrBlank()) {
                 put("contact_name", JSONObject.NULL)
             } else {
-                put("contact_name", event.contactName)
+                put("contact_name", contactName)
             }
-            put("started_at", Instant.ofEpochMilli(event.startedAtMs).toString())
-            put("ended_at", Instant.ofEpochMilli(event.endedAtMs).toString())
-            put("duration_seconds", event.durationSeconds)
-            put("direction", event.direction)
+            put("started_at", Instant.ofEpochMilli(startedAtMs).toString())
+            put("ended_at", Instant.ofEpochMilli(endedAtMs).toString())
+            put("duration_seconds", durationSeconds)
+            put("direction", direction)
             put("source_event_id", sourceEventId)
         }
 
         val url = relayUrl()
-        val phoneMasked = maskPhone(event.normalizedPhone)
-        Log.i(TAG, "[CALL_ENDED_RELAY_SEND] callLogId=${event.callLogId} sourceEventId=$sourceEventId phone=$phoneMasked linked=${linkedId != null}")
+        val phoneMasked = maskPhone(phone)
+        Log.i(TAG, "[CALL_ENDED_RELAY_SEND] callLogId=$callLogId sourceEventId=$sourceEventId phone=$phoneMasked")
 
-        try {
+        return try {
             val request = Request.Builder()
                 .url(url)
                 .header("Authorization", authHeader())
@@ -214,17 +228,30 @@ object CallTaskRelayClient {
 
             httpClient.newCall(request).execute().use { response ->
                 val bodyText = response.body?.string().orEmpty()
-                Log.w(TAG, "[CALL_TASK_RELAY_HTTP] callLogId=${event.callLogId} code=${response.code} body=${truncateBody(bodyText)}")
+                Log.w(TAG, "[CALL_TASK_RELAY_HTTP] callLogId=$callLogId code=${response.code} body=${truncateBody(bodyText)}")
+
+                when (response.code) {
+                    in 500..599, 429, 408 -> {
+                        return CallTaskRelayResult.Retryable("HTTP ${response.code}")
+                    }
+                    401, 403 -> {
+                        return CallTaskRelayResult.AuthBlocked("HTTP ${response.code}")
+                    }
+                    in 400..499 -> {
+                        if (!response.isSuccessful) {
+                            return CallTaskRelayResult.Retryable("HTTP ${response.code}")
+                        }
+                    }
+                }
 
                 if (!response.isSuccessful) {
-                    Log.w(TAG, "[CALL_TASK_RELAY_FAIL] callLogId=${event.callLogId} type=HttpFailure message=HTTP ${response.code}")
-                    return
+                    return CallTaskRelayResult.Retryable("HTTP ${response.code}")
                 }
 
                 val json = runCatching { JSONObject(bodyText) }.getOrNull()
                 if (json == null) {
-                    Log.w(TAG, "[CALL_TASK_RELAY_FAIL] callLogId=${event.callLogId} type=InvalidJson message=not valid JSON")
-                    return
+                    Log.w(TAG, "[CALL_TASK_RELAY_FAIL] callLogId=$callLogId type=InvalidJson")
+                    return CallTaskRelayResult.Retryable("invalid_json")
                 }
 
                 val ok = json.optBoolean("ok", false)
@@ -232,17 +259,47 @@ object CallTaskRelayClient {
                     val apiError = json.optString("error", "").trim()
                         .ifEmpty { json.optString("message", "").trim() }
                         .ifEmpty { "(missing error field)" }
-                    Log.w(TAG, "[CALL_TASK_RELAY_FAIL] callLogId=${event.callLogId} type=ApiResponse message=$apiError")
-                    return
+                    Log.w(TAG, "[CALL_TASK_RELAY_FAIL] callLogId=$callLogId type=ApiResponse message=$apiError")
+                    return CallTaskRelayResult.Retryable("api:$apiError")
                 }
 
-                store.markRelayed(event.callLogId)
                 val skipped = json.optBoolean("skipped", false)
-                val reason = json.optString("reason", "").ifEmpty { "(none)" }
-                Log.i(TAG, "[CALL_ENDED_RELAY_OK] callLogId=${event.callLogId} sourceEventId=$sourceEventId skipped=$skipped reason=$reason linked=${linkedId != null}")
+                val reason = json.optString("reason", "").ifEmpty { null }
+                val taskId = json.optString("taskId", "").ifEmpty {
+                    json.optString("task_id", "").ifEmpty { null }
+                }
+                // ok:true including skipped/duplicate/short_duration → ACK (server accepted or deduped)
+                Log.i(
+                    TAG,
+                    "[CALL_ENDED_RELAY_OK] callLogId=$callLogId sourceEventId=$sourceEventId " +
+                        "skipped=$skipped reason=${reason ?: "(none)"}",
+                )
+                CallTaskRelayResult.Acked(skipped = skipped, reason = reason, taskId = taskId)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "[CALL_TASK_RELAY_FAIL] callLogId=${event.callLogId} ${exceptionDetail(e)}")
+            Log.w(TAG, "[CALL_TASK_RELAY_FAIL] callLogId=$callLogId ${exceptionDetail(e)}")
+            CallTaskRelayResult.Retryable(e.javaClass.simpleName)
+        }
+    }
+
+    /** @deprecated Prefer outbox + [relayEndedOutbox]. Kept for any residual direct callers. */
+    @Deprecated("Use CallLogOutboxIngestor + CallLogRelayWorker")
+    fun relayEndedCall(context: android.content.Context, event: EndedCallEvent) {
+        val store = CallTaskRelayStore(context)
+        if (store.wasRelayed(event.callLogId)) return
+        val sourceEventId = resolveSourceEventId(event)
+        val result = relayEndedOutbox(
+            sourceEventId = sourceEventId,
+            phone = event.normalizedPhone,
+            contactName = event.contactName,
+            startedAtMs = event.startedAtMs,
+            endedAtMs = event.endedAtMs,
+            durationSeconds = event.durationSeconds,
+            direction = event.direction,
+            callLogId = event.callLogId,
+        )
+        if (result is CallTaskRelayResult.Acked) {
+            store.markRelayed(event.callLogId)
         }
     }
 }

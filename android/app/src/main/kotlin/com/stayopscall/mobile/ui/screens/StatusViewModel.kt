@@ -71,8 +71,11 @@ class StatusViewModel @Inject constructor(
 
     private fun matchesFilter(item: CallRecordingEntity, filter: StatusFilter): Boolean = when (filter) {
         StatusFilter.All -> true
-        StatusFilter.Failed -> item.status == RecordingStatus.FailedUpload
-        StatusFilter.RetryNeeded -> item.status == RecordingStatus.RetryPending
+        StatusFilter.Failed -> item.status == RecordingStatus.FailedUpload ||
+            item.status == RecordingStatus.FailedPermanent
+        StatusFilter.RetryNeeded -> item.status == RecordingStatus.Retryable ||
+            item.status == RecordingStatus.RetryPending ||
+            item.status == RecordingStatus.AuthBlocked
         StatusFilter.Uploading -> item.status == RecordingStatus.Uploading
         StatusFilter.Synced -> item.status == RecordingStatus.Synced || item.status == RecordingStatus.Duplicate
     }

@@ -1,11 +1,12 @@
 package com.stayopscall.mobile.di
 
 import android.content.Context
-import androidx.room.Room
 import com.stayopscall.mobile.BuildConfig
 import com.stayopscall.mobile.core.auth.AuthTokenStore
 import com.stayopscall.mobile.data.local.AppDatabase
+import com.stayopscall.mobile.data.local.AppDatabaseProvider
 import com.stayopscall.mobile.data.local.dao.AppSettingDao
+import com.stayopscall.mobile.data.local.dao.CallLogOutboxDao
 import com.stayopscall.mobile.data.local.dao.CallRecordingDao
 import com.stayopscall.mobile.data.local.dao.DeviceDao
 import com.stayopscall.mobile.data.remote.MobileApi
@@ -38,14 +39,10 @@ object AppModule {
     @Provides
     @Singleton
     fun provideDb(@ApplicationContext context: Context): AppDatabase =
-        Room.databaseBuilder(context, AppDatabase::class.java, "stay_ops_call.db")
-            .addMigrations(
-                AppDatabase.MIGRATION_1_2,
-                AppDatabase.MIGRATION_2_3,
-                AppDatabase.MIGRATION_3_4,
-                AppDatabase.MIGRATION_4_5,
-            )
-            .build()
+        AppDatabaseProvider.get(context)
+
+    @Provides
+    fun provideCallLogOutboxDao(db: AppDatabase): CallLogOutboxDao = db.callLogOutboxDao()
 
     @Provides
     fun provideCallDao(db: AppDatabase): CallRecordingDao = db.callRecordingDao()
