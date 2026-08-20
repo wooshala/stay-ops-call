@@ -5,21 +5,29 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.stayopscall.mobile.data.local.dao.AppSettingDao
+import com.stayopscall.mobile.data.local.dao.CallLogOutboxDao
 import com.stayopscall.mobile.data.local.dao.CallRecordingDao
 import com.stayopscall.mobile.data.local.dao.DeviceDao
 import com.stayopscall.mobile.data.local.entity.AppSettingEntity
+import com.stayopscall.mobile.data.local.entity.CallLogOutboxEntity
 import com.stayopscall.mobile.data.local.entity.CallRecordingEntity
 import com.stayopscall.mobile.data.local.entity.DeviceRegistrationEntity
 
 @Database(
-    entities = [CallRecordingEntity::class, DeviceRegistrationEntity::class, AppSettingEntity::class],
-    version = 5,
-    exportSchema = false
+    entities = [
+        CallRecordingEntity::class,
+        DeviceRegistrationEntity::class,
+        AppSettingEntity::class,
+        CallLogOutboxEntity::class,
+    ],
+    version = 7,
+    exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun callRecordingDao(): CallRecordingDao
     abstract fun deviceDao(): DeviceDao
     abstract fun appSettingDao(): AppSettingDao
+    abstract fun callLogOutboxDao(): CallLogOutboxDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -79,5 +87,78 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `call_recordings` ADD COLUMN `durationSec` INTEGER")
             }
         }
+
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `call_log_outbox` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `androidCallLogId` INTEGER NOT NULL,
+                        `sourceEventId` TEXT NOT NULL,
+                        `phoneNumber` TEXT NOT NULL,
+                        `contactName` TEXT,
+                        `direction` TEXT NOT NULL,
+                        `startedAtMs` INTEGER NOT NULL,
+                        `endedAtMs` INTEGER NOT NULL,
+                        `durationSeconds` INTEGER NOT NULL,
+                        `eventType` TEXT NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `attemptCount` INTEGER NOT NULL,
+                        `lastAttemptAt` INTEGER,
+                        `lastError` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `ackedAt` INTEGER
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_call_log_outbox_androidCallLogId` " +
+                        "ON `call_log_outbox` (`androidCallLogId`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_call_log_outbox_status` ON `call_log_outbox` (`status`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_call_log_outbox_startedAtMs` " +
+                        "ON `call_log_outbox` (`startedAtMs`)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_call_log_outbox_sourceEventId` " +
+                        "ON `call_log_outbox` (`sourceEventId`)",
+                )
+            }
+        }
+
+        /**
+         * Backoff column + status rename.
+         * Does NOT requeue historical `failed_upload` rows (CALL-RELIABILITY-03 recovery track).
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `call_log_outbox` ADD COLUMN `nextAttemptAt` INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "ALTER TABLE `call_recordings` ADD COLUMN `nextAttemptAt` INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "UPDATE `call_log_outbox` SET status = 'RETRYABLE' WHERE status = 'FAILED_RETRYABLE'",
+                )
+                db.execSQL(
+                    "UPDATE `call_recordings` SET status = 'retryable' WHERE status = 'retry_pending'",
+                )
+            }
+        }
+
+        val ALL_MIGRATIONS: Array<Migration> = arrayOf(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5,
+            MIGRATION_5_6,
+            MIGRATION_6_7,
+        )
     }
 }

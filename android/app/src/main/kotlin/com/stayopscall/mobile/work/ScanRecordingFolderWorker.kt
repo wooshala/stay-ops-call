@@ -3,7 +3,6 @@ package com.stayopscall.mobile.work
 import android.content.Context
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
-import androidx.room.Room
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.stayopscall.mobile.core.calllog.RecordingCallMetadata
@@ -16,6 +15,7 @@ import com.stayopscall.mobile.core.sync.ScanEnqueuePolicy
 import com.stayopscall.mobile.core.sync.ScanProgressStore
 import com.stayopscall.mobile.core.sync.SyncStatusTracker
 import com.stayopscall.mobile.data.local.AppDatabase
+import com.stayopscall.mobile.data.local.AppDatabaseProvider
 import com.stayopscall.mobile.data.local.RecordingStatus
 import com.stayopscall.mobile.data.local.entity.CallRecordingEntity
 import kotlinx.coroutines.runBlocking
@@ -186,6 +186,7 @@ class ScanRecordingFolderWorker(
         val finalCandidates: List<ScanCandidateLogic.FileProbe>
         var nextReconcileCursor: ScanCandidateLogic.Checkpoint? = null
         var markReconcileComplete = false
+        var incrementalHasMore = false
 
         if (mode == MODE_FULL_RECONCILE) {
             val page = ScanCandidateLogic.filterReconcileBatchByCursor(
@@ -200,7 +201,9 @@ class ScanRecordingFolderWorker(
                 markReconcileComplete = true
             }
         } else {
-            finalCandidates = ScanCandidateLogic.filterIncremental(probes, checkpoint)
+            val page = ScanCandidateLogic.filterIncrementalDrain(probes, checkpoint)
+            finalCandidates = page.batch
+            incrementalHasMore = page.hasMore
         }
 
         progress.recordTiming("sort_filter_ms", System.currentTimeMillis() - sortStart)
@@ -220,6 +223,10 @@ class ScanRecordingFolderWorker(
             progress.finish(ScanProgressStore.Result.SUCCESS)
             mark("scan complete inserted=0")
             SyncStatusTracker.onScanFinished(applicationContext, success = true)
+            WorkerDebugStore(applicationContext).putLong(
+                WorkerDebugStore.KEY_LAST_SCAN_SUCCESS_MS,
+                System.currentTimeMillis(),
+            )
             RecordingSyncTrigger.enqueueUpload(applicationContext)
             return Result.success()
         }
@@ -330,9 +337,32 @@ class ScanRecordingFolderWorker(
         }
 
         progress.finish(ScanProgressStore.Result.SUCCESS)
-        mark("scan complete inserted=$insertedCount")
+        mark(
+            "scan complete inserted=$insertedCount hasMore=" +
+                "${incrementalHasMore || nextReconcileCursor != null}",
+        )
         SyncStatusTracker.onScanFinished(applicationContext, success = true)
+        WorkerDebugStore(applicationContext).putLong(
+            WorkerDebugStore.KEY_LAST_SCAN_SUCCESS_MS,
+            System.currentTimeMillis(),
+        )
         RecordingSyncTrigger.enqueueUpload(applicationContext)
+
+        // P0: drain backlog without requiring another manual app open.
+        when {
+            mode == MODE_FULL_RECONCILE && nextReconcileCursor != null -> {
+                RecordingSyncTrigger.enqueueScanContinue(
+                    applicationContext,
+                    mode = MODE_FULL_RECONCILE,
+                )
+            }
+            mode == MODE_INCREMENTAL && incrementalHasMore -> {
+                RecordingSyncTrigger.enqueueScanContinue(
+                    applicationContext,
+                    mode = MODE_INCREMENTAL,
+                )
+            }
+        }
         return Result.success()
     }
 
@@ -351,26 +381,6 @@ class ScanRecordingFolderWorker(
     }
 
     private object ScanWorkerDeps {
-        @Volatile
-        private var db: AppDatabase? = null
-
-        fun get(context: Context): AppDatabase {
-            db?.let { return it }
-            return synchronized(this) {
-                db ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "stay_ops_call.db",
-                )
-                    .addMigrations(
-                        AppDatabase.MIGRATION_1_2,
-                        AppDatabase.MIGRATION_2_3,
-                        AppDatabase.MIGRATION_3_4,
-                        AppDatabase.MIGRATION_4_5,
-                    )
-                    .build()
-                    .also { db = it }
-            }
-        }
+        fun get(context: Context): AppDatabase = AppDatabaseProvider.get(context)
     }
 }

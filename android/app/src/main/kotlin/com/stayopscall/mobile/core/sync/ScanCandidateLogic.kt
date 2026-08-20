@@ -26,36 +26,68 @@ object ScanCandidateLogic {
         val lastSeenUri: String?,
     )
 
+    data class IncrementalPage(
+        val batch: List<FileProbe>,
+        val hasMore: Boolean,
+    )
+
     /**
-     * Keep probes newer than (checkpoint.ts - overlap), plus same-second tie-breakers
-     * not yet past lastSeenUri when timestamps equal the checkpoint.
+     * Eligible probes for incremental sync (checkpoint + overlap), unordered filter only.
+     */
+    fun filterEligibleIncremental(
+        probes: List<FileProbe>,
+        checkpoint: Checkpoint?,
+        overlapMs: Long = OVERLAP_MS,
+    ): List<FileProbe> {
+        if (checkpoint == null) {
+            return probes
+        }
+        val cutoff = checkpoint.lastSeenTimestamp - overlapMs
+        return probes.filter { probe ->
+            when {
+                probe.rankingTimestamp > checkpoint.lastSeenTimestamp -> true
+                probe.rankingTimestamp < cutoff -> false
+                probe.rankingTimestamp < checkpoint.lastSeenTimestamp -> true
+                else -> {
+                    val lastUri = checkpoint.lastSeenUri
+                    lastUri == null || probe.uri > lastUri
+                }
+            }
+        }
+    }
+
+    /**
+     * P0 durable drain: oldest-first among eligible, then batch.
+     * Checkpoint should advance to the newest item in [IncrementalPage.batch] so the
+     * drained prefix is never skipped and remaining older backlog stays eligible next run.
+     */
+    fun filterIncrementalDrain(
+        probes: List<FileProbe>,
+        checkpoint: Checkpoint?,
+        overlapMs: Long = OVERLAP_MS,
+        batchSize: Int = INCREMENTAL_TOP_N,
+    ): IncrementalPage {
+        val eligible = filterEligibleIncremental(probes, checkpoint, overlapMs)
+        val sorted = if (checkpoint == null) {
+            // Bootstrap: still prefer newest live window first, but page until exhausted via hasMore.
+            eligible.sortedWith(newestFirst())
+        } else {
+            eligible.sortedWith(oldestFirst())
+        }
+        val batch = sorted.take(batchSize)
+        return IncrementalPage(batch = batch, hasMore = eligible.size > batch.size)
+    }
+
+    /**
+     * Keep probes newer than (checkpoint.ts - overlap), plus same-second tie-breakers.
+     * Uses oldest-first drain when a checkpoint exists (P0 backlog contract).
      */
     fun filterIncremental(
         probes: List<FileProbe>,
         checkpoint: Checkpoint?,
         overlapMs: Long = OVERLAP_MS,
         topN: Int = INCREMENTAL_TOP_N,
-    ): List<FileProbe> {
-        if (checkpoint == null) {
-            return probes
-                .sortedWith(newestFirst())
-                .take(topN)
-        }
-        val cutoff = checkpoint.lastSeenTimestamp - overlapMs
-        val filtered = probes.filter { probe ->
-            when {
-                probe.rankingTimestamp > checkpoint.lastSeenTimestamp -> true
-                probe.rankingTimestamp < cutoff -> false
-                probe.rankingTimestamp < checkpoint.lastSeenTimestamp -> true
-                else -> {
-                    // equal timestamp: include only uris after lastSeen (tie-break); re-include lastSeen via overlap path not needed
-                    val lastUri = checkpoint.lastSeenUri
-                    lastUri == null || probe.uri > lastUri
-                }
-            }
-        }
-        return filtered.sortedWith(newestFirst()).take(topN)
-    }
+    ): List<FileProbe> = filterIncrementalDrain(probes, checkpoint, overlapMs, topN).batch
 
     /**
      * @deprecated Prefer [filterReconcileBatchByCursor]. Offset pagination drifts when the
@@ -124,6 +156,8 @@ object ScanCandidateLogic {
     /**
      * Checkpoint cursor after a successful pass over [processed] probes (candidates compared,
      * whether or not newly inserted).
+     *
+     * For oldest-first drain: advances to the newest in the batch (high-water of drained prefix).
      */
     fun nextCheckpoint(processed: List<FileProbe>, previous: Checkpoint?): Checkpoint? {
         if (processed.isEmpty()) return previous
@@ -134,6 +168,10 @@ object ScanCandidateLogic {
     fun newestFirst(): Comparator<FileProbe> =
         compareByDescending<FileProbe> { it.rankingTimestamp }
             .thenByDescending { it.uri }
+
+    fun oldestFirst(): Comparator<FileProbe> =
+        compareBy<FileProbe> { it.rankingTimestamp }
+            .thenBy { it.uri }
 
     fun isPastSoftTimeout(startedAtMs: Long, nowMs: Long, budgetMs: Long = SOFT_TIMEOUT_MS): Boolean =
         nowMs - startedAtMs >= budgetMs

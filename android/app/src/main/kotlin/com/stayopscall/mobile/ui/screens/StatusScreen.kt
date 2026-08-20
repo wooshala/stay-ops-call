@@ -65,7 +65,10 @@ fun StatusScreen(viewModel: StatusViewModel = hiltViewModel()) {
 
 @Composable
 private fun StatusItem(call: CallRecordingEntity) {
-    val statusColor = if (call.status == RecordingStatus.FailedUpload) Color(0xFFB00020) else Color.Unspecified
+    val statusColor = if (
+        call.status == RecordingStatus.FailedUpload ||
+        call.status == RecordingStatus.FailedPermanent
+    ) Color(0xFFB00020) else Color.Unspecified
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("file: ${call.fileName}")

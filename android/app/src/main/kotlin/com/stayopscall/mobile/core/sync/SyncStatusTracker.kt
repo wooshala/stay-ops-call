@@ -23,6 +23,10 @@ object SyncStatusTracker {
             return
         }
         Log.d(TAG, "scan_finished_ok")
+        WorkerDebugStore(context.applicationContext).putLong(
+            WorkerDebugStore.KEY_LAST_SCAN_SUCCESS_MS,
+            System.currentTimeMillis(),
+        )
     }
 
     /** Upload leg drives user-visible sync completion. */

@@ -6,11 +6,12 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.provider.CallLog
 import android.util.Log
-import com.stayopscall.mobile.core.relay.CallTaskRelayClient
 
+/**
+ * Observes CallLog changes and drives durable outbox ingest (not direct HTTP).
+ */
 object CallLogCallTaskMonitor {
     private const val TAG = "StayOpsCallRelay"
-    private const val LOOKBACK_MS = 15 * 60 * 1000L
 
     @Volatile
     private var started = false
@@ -41,7 +42,7 @@ object CallLogCallTaskMonitor {
                 observer!!,
             )
             started = true
-            Log.d(TAG, "CallLog observer registered")
+            Log.d(TAG, "CallLog observer registered (durable outbox)")
             scanAndRelay(appContext, handler)
         }
     }
@@ -59,12 +60,7 @@ object CallLogCallTaskMonitor {
     private fun scanAndRelay(appContext: Context, handler: Handler) {
         handler.post {
             try {
-                val sinceMs = System.currentTimeMillis() - LOOKBACK_MS
-                val events = CallLogEndedCallScanner.scanRecentEndedCalls(appContext, sinceMs)
-                for (event in events) {
-                    Log.i(TAG, "[CALL_ENDED_DETECTED] callLogId=${event.callLogId} phone=***${event.normalizedPhone.takeLast(4)} duration=${event.durationSeconds}s direction=${event.direction}")
-                    CallTaskRelayClient.relayEndedCall(appContext, event)
-                }
+                CallLogOutboxIngestor.scanAndEnqueue(appContext, trigger = "observer")
             } catch (e: Exception) {
                 Log.e(TAG, "scanAndRelay failed", e)
             }

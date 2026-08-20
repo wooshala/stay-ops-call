@@ -159,6 +159,21 @@ object RecordingSyncTrigger {
         Log.d(TAG, "upload enqueued policy=KEEP")
     }
 
+    /**
+     * Continue backlog drain / reconcile paging. Uses APPEND_OR_REPLACE so a follow-up
+     * run is scheduled even if this unique work is still finishing.
+     */
+    fun enqueueScanContinue(context: Context, mode: String) {
+        val appContext = context.applicationContext
+        val request = OneTimeWorkRequestBuilder<ScanRecordingFolderWorker>()
+            .setInputData(workDataOf(ScanRecordingFolderWorker.KEY_MODE to mode))
+            .setInitialDelay(750, TimeUnit.MILLISECONDS)
+            .build()
+        WorkManager.getInstance(appContext)
+            .enqueueUniqueWork(UNIQUE_SCAN_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+        Log.d(TAG, "scan continue enqueued mode=$mode")
+    }
+
     /** @return true if a stale run was cancelled. */
     fun recoverStaleScanIfNeeded(
         context: Context,
