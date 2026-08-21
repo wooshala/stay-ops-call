@@ -10,6 +10,7 @@ import com.stayopscall.mobile.core.calllog.RecordingCallMetadata
 import com.stayopscall.mobile.core.device.DeviceIdentityProvider
 import com.stayopscall.mobile.core.storage.WorkerDebugStore
 import com.stayopscall.mobile.core.sync.CollectorRetryPolicy
+import com.stayopscall.mobile.core.sync.SafRecordingUploadBody
 import com.stayopscall.mobile.core.sync.SyncStatusTracker
 import com.stayopscall.mobile.data.local.AppDatabaseProvider
 import com.stayopscall.mobile.data.local.RecordingStatus
@@ -25,7 +26,6 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
 import okhttp3.logging.HttpLoggingInterceptor
-import okio.BufferedSink
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 
@@ -120,20 +120,11 @@ class UploadQueueWorker(
                 val mimeType = applicationContext.contentResolver.getType(uri) ?: "audio/m4a"
                 val deviceId = deviceIdentityProvider.getOrCreateInstallationUuid()
 
-                val fileBody = object : RequestBody() {
-                    override fun contentType() = mimeType.toMediaTypeOrNull()
-                    override fun contentLength(): Long = uploadItem.fileSize
-                    override fun writeTo(sink: BufferedSink) {
-                        applicationContext.contentResolver.openInputStream(uri)?.use { input ->
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                            while (true) {
-                                val read = input.read(buffer)
-                                if (read <= 0) break
-                                sink.write(buffer, 0, read)
-                            }
-                        } ?: throw java.io.FileNotFoundException("Cannot open file stream")
+                // Do not trust Room/SAF metadata fileSize for Content-Length (03C/03F).
+                val fileBody =
+                    SafRecordingUploadBody.fromStream(mimeType) {
+                        applicationContext.contentResolver.openInputStream(uri)
                     }
-                }
                 val filePart = MultipartBody.Part.createFormData("file", uploadItem.fileName, fileBody)
 
                 fun textPartOrNull(value: String?): RequestBody? {
